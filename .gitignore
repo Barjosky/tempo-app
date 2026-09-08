@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+store/
+
+reports/*.json
+reports/*.npz
+# Rapports de backtest : seul le dernier est utile, les autres sont des rejeux locaux.
+reports/backtest_*.html

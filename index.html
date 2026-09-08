@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tempo — prévisions 10 jours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="masthead">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>TEMPO<span>/</span>10</h1>
+      <p class="sub">Prévision des couleurs EDF — 10 jours glissants</p>
+    </div>
+  </div>
+  <div class="run-meta">
+    <span class="label">dernier calcul</span>
+    <strong id="run-date">—</strong>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="forecast" role="tab">Prévisions</button>
+  <button class="tab" data-tab="history" role="tab">Historique</button>
+</nav>
+
+<main>
+  <section id="panel-forecast" class="panel is-active">
+    <aside class="quotas">
+      <h2>Saison <span id="season-label">—</span></h2>
+      <div class="gauge" data-color="rouge">
+        <div class="gauge-head"><span>Rouges restants</span><strong id="rouge-left">—</strong></div>
+        <div class="track"><i id="rouge-bar"></i></div>
+        <small><span id="rouge-used">0</span> / 22 consommés</small>
+      </div>
+      <div class="gauge" data-color="blanc">
+        <div class="gauge-head"><span>Blancs restants</span><strong id="blanc-left">—</strong></div>
+        <div class="track"><i id="blanc-bar"></i></div>
+        <small><span id="blanc-used">0</span> / 43 consommés</small>
+      </div>
+      <p class="note">Seul J+1 est publié officiellement par RTE (vers 11h). Au-delà, ce sont
+        des probabilités : la confiance décroît avec l'échéance.</p>
+    </aside>
+
+    <div class="days" id="days"></div>
+  </section>
+
+  <section id="panel-history" class="panel">
+    <div class="filters">
+      <div class="seg" id="source-filter">
+        <button class="is-active" data-source="all">Tout</button>
+        <button data-source="live">Temps réel</button>
+        <button data-source="backtest">Backtest</button>
+      </div>
+      <label class="pick">Échéance
+        <select id="horizon-filter">
+          <option value="">toutes</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="history-grid">
+      <div class="card-block">
+        <h3>Précision par échéance</h3>
+        <div id="horizon-bars" class="hbars"></div>
+      </div>
+      <div class="card-block">
+        <h3>Matrice de confusion</h3>
+        <div id="confusion" class="confusion"></div>
+        <p class="legend">lignes = couleur réelle · colonnes = couleur prédite</p>
+      </div>
+    </div>
+
+    <div class="card-block">
+      <h3>Prédictions figées vs réalité</h3>
+      <div class="table-wrap">
+        <table id="history-table">
+          <thead><tr>
+            <th>Date</th><th>Éch.</th><th>Prédit</th><th>Réel</th>
+            <th>Bleu</th><th>Blanc</th><th>Rouge</th><th>Source</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

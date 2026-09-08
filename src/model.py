@@ -1,0 +1,115 @@
+"""Baseline climatologique + modele hybride (GBM calibre puis contraint par les regles)."""
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.model_selection import GroupKFold
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import config
+from src import features, rules
+
+CLASSES = [config.BLEU, config.BLANC, config.ROUGE]
+
+
+def _mask_matrix(meta):
+    """Masque des couleurs contractuellement possibles pour chaque ligne."""
+    return np.array([
+        rules.allowed_mask(m["target"], m["is_holiday"], m["rouge_left"], m["blanc_left"])
+        for m in meta
+    ], dtype=float)
+
+
+def constrain(probs, meta):
+    """Annule les couleurs impossibles et renormalise."""
+    masked = probs * _mask_matrix(meta)
+    total = masked.sum(axis=1, keepdims=True)
+    fallback = np.zeros_like(masked)
+    fallback[:, 0] = 1.0
+    return np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
+
+
+class ClimatologyBaseline:
+    """Frequences historiques conditionnelles (mois x type de jour x quota restant)."""
+
+    def __init__(self, alpha=1.0):
+        self.alpha = alpha
+        self.table = defaultdict(lambda: np.zeros(3))
+        self.prior = np.zeros(3)
+
+    @staticmethod
+    def _key(m):
+        target = m["target"]
+        wd = target.weekday()
+        wd_class = 2 if wd == 6 else (1 if wd == 5 else 0)
+        quota_bucket = min(3, m["rouge_left"] // 6)
+        return (target.month, wd_class, int(m["is_holiday"]), quota_bucket)
+
+    def fit(self, meta, y):
+        for m, color in zip(meta, y):
+            self.table[self._key(m)][CLASSES.index(color)] += 1
+            self.prior[CLASSES.index(color)] += 1
+        return self
+
+    def predict_proba(self, meta):
+        prior = (self.prior + self.alpha) / (self.prior.sum() + 3 * self.alpha)
+        out = []
+        for m in meta:
+            counts = self.table.get(self._key(m))
+            if counts is None or counts.sum() < 5:
+                out.append(prior)
+            else:
+                out.append((counts + self.alpha) / (counts.sum() + 3 * self.alpha))
+        return constrain(np.array(out), meta)
+
+
+class TempoModel:
+    """GBM multi-classe calibre, puis passe dans les contraintes Tempo."""
+
+    # Le seuil d'alerte Rouge est un choix explicite (config.ROUGE_ALERT_THRESHOLD),
+    # pas une valeur auto-calee : le calage automatique, teste sur une puis sur
+    # plusieurs saisons de validation, s'effondrait au plancher (0.05) et noyait la
+    # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
+    def __init__(self, seed=0, class_weight=None, rouge_threshold=None):
+        self.seed = seed
+        self.class_weight = class_weight
+        self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
+                                else rouge_threshold)
+        self.clf = None
+
+    def _base(self):
+        return HistGradientBoostingClassifier(
+            max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
+            min_samples_leaf=40, l2_regularization=1.0,
+            class_weight=self.class_weight,
+            early_stopping=False, random_state=self.seed,
+        )
+
+    def _fit_calibrated(self, X, y, meta):
+        groups = np.array([m["target"].toordinal() for m in meta])
+        n_groups = len(set(groups.tolist()))
+        splits = list(GroupKFold(n_splits=min(4, max(2, n_groups))).split(X, y, groups))
+        clf = CalibratedClassifierCV(self._base(), method="isotonic", cv=splits)
+        clf.fit(X, y)
+        return clf
+
+    def fit(self, X, y, meta):
+        self.clf = self._fit_calibrated(X, np.array(y), meta)
+        return self
+
+    def predict_proba(self, X, meta):
+        raw = self.clf.predict_proba(X)
+        ordered = np.zeros((len(X), 3))
+        for i, cls in enumerate(self.clf.classes_):
+            ordered[:, CLASSES.index(int(cls))] = raw[:, i]
+        return constrain(ordered, meta)
+
+
+def decide(probs, rouge_threshold):
+    """Couleur retenue : argmax, mais un Rouge probable prime (rater un Rouge coute cher)."""
+    colors = np.array(CLASSES)[probs.argmax(axis=1)]
+    colors[probs[:, 2] >= rouge_threshold] = config.ROUGE
+    return colors

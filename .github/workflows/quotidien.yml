@@ -1,0 +1,80 @@
+# Remplace le PC allume : c'est GitHub qui collecte et predit chaque jour.
+# La base SQLite et le modele vivent dans le cache Actions (trop volumineux pour git) ;
+# seuls les JSON du site sont commites, ce qui declenche la republication par Pages.
+name: Prevision quotidienne
+
+on:
+  schedule:
+    # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee.
+    - cron: "30 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prevision-quotidienne
+  cancel-in-progress: false
+
+jobs:
+  prevoir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Cle glissante : chaque execution ecrit un nouveau cache, restore-keys
+      # recupere le plus recent (une cle Actions ne peut pas etre ecrasee).
+      - name: Restaurer la base et le modele
+        uses: actions/cache/restore@v4
+        with:
+          path: store
+          key: tempo-store-${{ github.run_id }}
+          restore-keys: tempo-store-
+
+      - name: Constituer l'historique si le cache est vide
+        run: |
+          if [ ! -f store/tempo.db ]; then
+            echo "Aucun cache : collecte complete de l'historique (~40 min)"
+            python ingest.py
+            python ingest_renouvelables.py
+            python ingest_conso.py
+            python collector.py --train
+            python backfill.py
+          fi
+
+      - name: Collecte du jour et prediction
+        run: python collector.py
+
+      - name: Reentrainer le modele le lundi
+        run: |
+          if [ "$(date +%u)" = "1" ]; then python collector.py --train; fi
+
+      - name: Figer les donnees du site
+        run: python export_static.py
+
+      - name: Sauvegarder la base et le modele
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: store
+          key: tempo-store-${{ github.run_id }}
+
+      - name: Publier (GitHub Pages republie sur ce commit)
+        run: |
+          git config user.name "tempo-bot"
+          git config user.email "tempo-bot@users.noreply.github.com"
+          git add data
+          if git diff --staged --quiet; then
+            echo "Aucun changement a publier"
+          else
+            git commit -m "Previsions du $(date -u +%Y-%m-%d)"
+            git push
+          fi
