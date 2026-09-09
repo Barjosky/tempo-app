@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config
-from src import db
+from src import db, rules
 from src.sources import calendrier
 
 app = Flask(__name__, static_folder=str(config.SITE_DIR), static_url_path="")
@@ -36,6 +36,26 @@ def season_summary(conn, today=None):
         "blanc_used": counts.get(2, 0), "blanc_left": config.QUOTA_BLANC - counts.get(2, 0),
         "bleu_used": counts.get(1, 0), "bleu_left": quota_bleu - counts.get(1, 0),
     }
+
+
+ROUGE_MONTHS_SQL = ", ".join(str(m) for m in sorted(rules.ROUGE_MONTHS))
+
+
+def period_clause(period):
+    """Restreint l'evaluation a la periode demandee.
+
+    Un taux de reussite sur l'annee entiere est flatte par les mois sans enjeu :
+    d'avril a octobre la reponse est Bleu et le modele ne risque rien. 'hiver' garde
+    la fenetre ou un Rouge est possible ; 'eligibles' va au bout en ne gardant que
+    les jours ou il l'est vraiment (lundi-vendredi, hors feries) -- le denominateur
+    honnete, celui ou le modele a reellement un choix a faire.
+    """
+    if period not in ("hiver", "eligibles"):
+        return ""
+    clause = f" AND CAST(strftime('%m', p.target_date) AS INTEGER) IN ({ROUGE_MONTHS_SQL})"
+    if period == "eligibles":
+        clause += " AND d.weekday < 5 AND d.is_holiday = 0"
+    return clause
 
 
 def tariff_payload():
@@ -110,6 +130,7 @@ def history():
     horizon = request.args.get("horizon", type=int)
     limit = request.args.get("limit", default=400, type=int)
     source = request.args.get("source", default="all")
+    period = request.args.get("period", default="all")
     where = ["d.color IS NOT NULL"]
     params = []
     if horizon:
@@ -122,7 +143,7 @@ def history():
     rows = conn.execute(
         f"""SELECT p.*, d.color AS actual FROM predictions p
             JOIN days d ON d.date = p.target_date
-            WHERE {' AND '.join(where)}
+            WHERE {' AND '.join(where)}{period_clause(period)}
             ORDER BY p.target_date DESC, p.horizon LIMIT ?""",
         (*params, limit)).fetchall()
     return jsonify([{
@@ -142,6 +163,7 @@ def accuracy():
     conn = db.connect()
     source = request.args.get("source", default="all")
     horizon = request.args.get("horizon", type=int)
+    period = request.args.get("period", default="all")
     cond, params = "", []
     if source == "live":
         cond = f"AND {LIVE_VERSIONS}"
@@ -150,6 +172,7 @@ def accuracy():
     if horizon:
         cond += " AND p.horizon = ?"
         params.append(horizon)
+    cond += period_clause(period)
     rows = conn.execute(
         f"""SELECT p.horizon, p.predicted_color, p.p_rouge, d.color AS actual
             FROM predictions p JOIN days d ON d.date = p.target_date
@@ -168,7 +191,31 @@ def accuracy():
         "rouge_recall": v["rouge_found"] / v["rouge_total"] if v["rouge_total"] else None,
         "rouge_total": v["rouge_total"],
     } for h, v in sorted(by_h.items())]
-    return jsonify({"by_horizon": out, "confusion": confusion, "n": len(rows)})
+    return jsonify({"by_horizon": out, "confusion": confusion, "n": len(rows),
+                    "period": period, "reliability": reliability(rows)})
+
+
+def reliability(rows, bins=10):
+    """La probabilite annoncee tient-elle ses promesses ?
+
+    La page vend des probabilites ; sans cette mesure, rien ne dit qu'un « 30 % de
+    Rouge » tombe Rouge trois fois sur dix. On regroupe les predictions par tranche
+    de probabilite annoncee et on compare a la frequence reellement observee.
+    """
+    buckets = [{"lo": i / bins, "hi": (i + 1) / bins, "n": 0, "sum_p": 0.0, "hits": 0}
+               for i in range(bins)]
+    for r in rows:
+        p = r["p_rouge"]
+        if p is None:
+            continue
+        b = buckets[min(bins - 1, int(p * bins))]
+        b["n"] += 1
+        b["sum_p"] += p
+        b["hits"] += r["actual"] == 3
+    return [{
+        "bin": f"{b['lo']:.0%}-{b['hi']:.0%}", "n": b["n"],
+        "predicted": b["sum_p"] / b["n"], "observed": b["hits"] / b["n"],
+    } for b in buckets if b["n"] >= 20]
 
 
 @app.get("/api/backtest")

@@ -35,7 +35,7 @@ def _metrics(y, probs, preds):
 
 
 def run(conn, seasons=HONEST_SEASONS, seed=0, verbose=True,
-        class_weight=None, rouge_threshold=None, store=None):
+        class_weight=None, rouge_threshold=None, blanc_threshold=None, store=None):
     store = store or features.FeatureStore(conn)
     results = {"per_season": {}, "by_horizon": {}, "global": {}, "baseline": {}}
     all_rows = []
@@ -52,11 +52,12 @@ def run(conn, seasons=HONEST_SEASONS, seed=0, verbose=True,
             continue
 
         gbm = model.TempoModel(seed=seed, class_weight=class_weight,
-                               rouge_threshold=rouge_threshold).fit(Xtr, ytr, mtr)
+                               rouge_threshold=rouge_threshold,
+                               blanc_threshold=blanc_threshold).fit(Xtr, ytr, mtr)
         base = model.ClimatologyBaseline().fit(mtr, ytr)
 
         probs = gbm.predict_proba(Xte, mte)
-        preds = model.decide(probs, gbm.rouge_threshold)
+        preds = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
         bprobs = base.predict_proba(mte)
         bpreds = np.array(model.CLASSES)[bprobs.argmax(axis=1)]
 
@@ -64,6 +65,7 @@ def run(conn, seasons=HONEST_SEASONS, seed=0, verbose=True,
             "model": _metrics(yte, probs, preds),
             "baseline": _metrics(yte, bprobs, bpreds),
             "rouge_threshold": gbm.rouge_threshold,
+            "blanc_threshold": gbm.blanc_threshold,
             "n_train": len(Xtr),
         }
         for i, m in enumerate(mte):

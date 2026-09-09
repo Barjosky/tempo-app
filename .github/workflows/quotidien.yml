@@ -7,7 +7,16 @@ on:
   schedule:
     # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee.
     - cron: "30 10 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      reentrainer:
+        description: "Reentrainer le modele (a faire apres tout changement de features)"
+        type: boolean
+        default: false
+      rejouer:
+        description: "Rejouer le backtest dans l'historique de la page (long)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,6 +38,11 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
+
+      # Les tests hors base tournent partout ; ceux qui exigent les vraies donnees
+      # se sautent tant que le cache n'a rien restaure.
+      - name: Tests
+        run: python run_tests.py
 
       # Cle glissante : chaque execution ecrit un nouveau cache, restore-keys
       # recupere le plus recent (une cle Actions ne peut pas etre ecrasee).
@@ -53,9 +67,17 @@ jobs:
       - name: Collecte du jour et prediction
         run: python collector.py
 
-      - name: Reentrainer le modele le lundi
+      # Un changement de features rend le modele en cache obsolete : ses colonnes ne
+      # correspondent plus. D'ou le declenchement manuel, en plus du lundi.
+      - name: Reentrainer le modele
         run: |
-          if [ "$(date +%u)" = "1" ]; then python collector.py --train; fi
+          if [ "${{ inputs.reentrainer }}" = "true" ] || [ "$(date +%u)" = "1" ]; then
+            python collector.py --train
+          fi
+
+      - name: Rejouer le backtest dans l'historique
+        if: inputs.rejouer == true
+        run: python backfill.py
 
       - name: Figer les donnees du site
         run: python export_static.py

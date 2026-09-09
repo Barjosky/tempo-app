@@ -73,11 +73,14 @@ class TempoModel:
     # pas une valeur auto-calee : le calage automatique, teste sur une puis sur
     # plusieurs saisons de validation, s'effondrait au plancher (0.05) et noyait la
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
-    def __init__(self, seed=0, class_weight=None, rouge_threshold=None):
+    def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
+                 blanc_threshold=None):
         self.seed = seed
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
+        self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
+                                else blanc_threshold)
         self.clf = None
 
     def _base(self):
@@ -108,8 +111,17 @@ class TempoModel:
         return constrain(ordered, meta)
 
 
-def decide(probs, rouge_threshold):
-    """Couleur retenue : argmax, mais un Rouge probable prime (rater un Rouge coute cher)."""
+def decide(probs, rouge_threshold, blanc_threshold=None):
+    """Couleur retenue : argmax, corrige par deux seuils.
+
+    L'argmax seul est structurellement aveugle aux classes rares : le Blanc pese ~12 %
+    des jours contre 82 % de Bleu, il ne l'emporte donc presque jamais meme quand il
+    est le pari le plus interessant. Chaque seuil promeut sa couleur des qu'elle est
+    assez probable, le Rouge en dernier car c'est lui qui coute le plus cher a rater.
+    """
+    blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
+                       else blanc_threshold)
     colors = np.array(CLASSES)[probs.argmax(axis=1)]
+    colors[probs[:, 1] >= blanc_threshold] = config.BLANC
     colors[probs[:, 2] >= rouge_threshold] = config.ROUGE
     return colors

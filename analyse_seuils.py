@@ -27,6 +27,10 @@ def compute_probs(path):
     dump = {}
     for season in SEASONS:
         train_end = calendrier.season_start(season) - timedelta(days=1)
+        # Sans ce calage, demand_coef reste None et toutes les colonnes de charge
+        # residuelle sortent en NaN : le balayage se faisait sur un modele ampute.
+        # Le cutoff est la meme borne que dans le backtest, pour rester point-in-time.
+        store.fit_demand_model(calendrier.season_start(season))
         Xtr, ytr, mtr = features.build_dataset(store, date(config.FIRST_SEASON, 9, 1), train_end)
         Xte, yte, mte = features.build_dataset(
             store, calendrier.season_start(season), calendrier.season_end(season))
@@ -93,6 +97,25 @@ def main():
     print(f"| **Total** | **{detectes:.1f}/{total:.0f}** | "
           f"{np.mean([r['fausses'] for r in detail.values()]):.1f} | "
           f"**{np.mean(rappels):.0%}** | **{np.mean(precisions):.0%}** |")
+
+    # Le Blanc s'arbitre separement : le manquer coute peu (heure pleine +16 % contre
+    # +341 % pour un Rouge), mais l'argmax seul ne le sort jamais. On regarde donc ce
+    # que chaque seuil rattrape, et ce qu'il abime au passage sur les jours Bleu.
+    print(f"\n=== Seuil Blanc (configure : {config.BLANC_ALERT_THRESHOLD:.2f}) ===")
+    print(f"{'seuil':>6} {'rappel Blanc':>13} {'precision Blanc':>16} {'Bleu abimes':>12}")
+    for t in np.arange(0.20, 0.85, 0.05):
+        rec, pre, abimes = [], [], []
+        for season in SEASONS:
+            y = data[f"{season}_y"]
+            p = data[f"{season}_probs"]
+            flag = p[:, 1] >= t
+            actual = y == config.BLANC
+            hits = (flag & actual).sum()
+            rec.append(hits / actual.sum() if actual.sum() else np.nan)
+            pre.append(hits / flag.sum() if flag.sum() else np.nan)
+            abimes.append((flag & (y == config.BLEU)).sum() / config.MAX_HORIZON)
+        print(f"{t:>6.2f} {np.nanmean(rec):>12.0%} {np.nanmean(pre):>15.0%} "
+              f"{np.mean(abimes):>12.1f}")
 
     eligibles = [r for r in rows if r[4] >= 0.40]
     if eligibles:

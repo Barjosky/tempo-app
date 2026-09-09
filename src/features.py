@@ -37,6 +37,16 @@ FEATURE_NAMES = [
     # sur eCO2mix) moins l'eolien et le solaire attendus (proxys calibres en MW).
     "peak_mw_pred", "wind_mw_pred", "residual_mw", "residual_rank_window",
     "residual_pct_season", "residual_vs_season_max",
+    # Cote OFFRE. Tout ce qui precede decrit la demande ; un jour Rouge nait pourtant
+    # d'une MARGE tendue. La puissance nucleaire disponible en est le premier terme,
+    # et son effondrement explique des saisons entieres que le froid seul n'explique pas.
+    "nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw",
+    # Prevision de consommation de RTE elle-meme, publiee la veille : disponible au
+    # seul horizon J+1 (NaN au-dela), la ou le modele devrait etre le plus fort.
+    "rte_forecast_mw", "rte_forecast_gap",
+    # Arbitrage budgetaire : combien de jours restants seront plus tendus que celui-ci,
+    # face au quota Rouge encore disponible. C'est la question qu'EDF se pose.
+    "colder_days_ahead", "rouge_budget_ratio",
 ]
 
 
@@ -69,11 +79,20 @@ class FeatureStore:
         self._net_season_cache = {}
         self._residual_season_cache = {}
         self._residual_window_cache = {}
+        self._nuclear_cache = {}
+        self._nuclear_normal_cache = {}
+        self._climat_residual_cache = {}
         self.conso = {}
+        cols = {c[1] for c in conn.execute("PRAGMA table_info(conso)")}
         for r in conn.execute("SELECT * FROM conso"):
             self.conso[date.fromisoformat(r["date"])] = {
                 "peak_mw": r["peak_mw"], "eolien_mw": r["eolien_mw"],
                 "solaire_mw": r["solaire_mw"],
+                # Bases anterieures a l'ajout de ces colonnes : on degrade en NaN
+                # plutot que de planter, le GBM sait traiter les valeurs manquantes.
+                "nucleaire_mw": r["nucleaire_mw"] if "nucleaire_mw" in cols else None,
+                "prevision_j1_peak_mw": (r["prevision_j1_peak_mw"]
+                                         if "prevision_j1_peak_mw" in cols else None),
             }
         self.demand_coef = self.wind_coef = self.solar_coef = None
         self.wind_sigma, self.solar_sigma = {}, {}
@@ -205,6 +224,12 @@ class FeatureStore:
         ce que le parc pilotable devra fournir, et donc ce qui declenche un Rouge.
         Le cutoff garantit qu'aucune donnee posterieure a la saison evaluee n'y entre.
         """
+        # Les caches derivent du modele de demande : les garder d'un calage a l'autre
+        # servirait des valeurs calculees avec les coefficients de la saison precedente.
+        self._residual_season_cache.clear()
+        self._residual_window_cache.clear()
+        self._net_season_cache.clear()
+        self._net_window_cache.clear()
         rows = [(d, v) for d, v in self.conso.items()
                 if d < cutoff and v["peak_mw"] is not None]
         if len(rows) < 200:
@@ -405,6 +430,113 @@ class FeatureStore:
         return sum(vals) / len(vals) if vals else float("nan")
 
 
+    def nuclear_recent(self, run_date, days=14):
+        """Puissance nucleaire recemment appelee (MW), mediane des pointes journalieres.
+
+        eCO2mix donne la production, pas la disponibilite -- mais en hiver le parc est
+        appele au plus pres de ce qu'il peut fournir, et le niveau recemment atteint
+        est donc un bon minorant de ce qui est disponible. On ne regarde que les jours
+        STRICTEMENT anterieurs au jour R : la production du jour meme n'est pas connue
+        au moment ou la prediction est faite.
+        """
+        if run_date in self._nuclear_cache:
+            return self._nuclear_cache[run_date]
+        vals = []
+        for i in range(1, days + 1):
+            v = self.conso.get(run_date - timedelta(days=i))
+            if v and v.get("nucleaire_mw") is not None:
+                vals.append(v["nucleaire_mw"])
+        out = float(np.median(vals)) if len(vals) >= 5 else float("nan")
+        self._nuclear_cache[run_date] = out
+        return out
+
+    def nuclear_normal(self, run_date):
+        """Niveau nucleaire typique de ce mois, sur les SEULES saisons anterieures.
+
+        Sans ce point de comparaison, le modele ne voit qu'un nombre de MW ; avec lui
+        il voit un parc plus faible que d'habitude, ce qui est l'information utile.
+        """
+        season = calendrier.season_of(run_date)
+        key = (season, run_date.month)
+        if key not in self._nuclear_normal_cache:
+            start = calendrier.season_start(season)
+            vals = [v["nucleaire_mw"] for d, v in self.conso.items()
+                    if d < start and d.month == run_date.month
+                    and v.get("nucleaire_mw") is not None]
+            self._nuclear_normal_cache[key] = (float(np.median(vals)) if len(vals) >= 20
+                                               else float("nan"))
+        return self._nuclear_normal_cache[key]
+
+    def rte_forecast(self, target, horizon):
+        """Prevision de consommation de RTE pour le lendemain (MW).
+
+        Elle n'existe qu'a J+1 : RTE la publie la veille. Au-dela on renvoie NaN
+        plutot que de la propager -- la propager donnerait au backtest une information
+        que la production n'aura jamais a ces echeances.
+        """
+        if horizon > 1:
+            return float("nan")
+        v = self.conso.get(target)
+        if not v or v.get("prevision_j1_peak_mw") is None:
+            return float("nan")
+        return float(v["prevision_j1_peak_mw"])
+
+    @staticmethod
+    def _winter_key(month, day):
+        """Ordonne une date DANS la saison : novembre precede janvier, pas l'inverse.
+
+        La fenetre Rouge enjambe le changement d'annee, donc comparer des (mois, jour)
+        bruts ferait passer janvier avant novembre. On decale les mois de debut d'annee.
+        """
+        return (month if month >= 11 else month + 12, day)
+
+    def _late_season_residuals(self, season, month, day):
+        """Charges residuelles observees plus tard en saison, sur les saisons anterieures.
+
+        Uniquement les jours ou un Rouge est contractuellement possible : c'est entre
+        ceux-la qu'EDF arbitre. Les saisons posterieures sont exclues, sinon on saurait
+        deja quel hiver on va avoir.
+        """
+        key = (season, month, day)
+        if key in self._climat_residual_cache:
+            return self._climat_residual_cache[key]
+        if month not in rules.ROUGE_MONTHS:
+            # Avant novembre tout l'hiver est devant ; apres mars il n'en reste rien.
+            cutoff = (0, 0) if month in (9, 10) else (99, 99)
+        else:
+            cutoff = self._winter_key(month, day)
+        start = calendrier.season_start(season)
+        vals = []
+        for d, v in self.conso.items():
+            if d >= start or not rules.rouge_possible(d):
+                continue
+            if self._winter_key(d.month, d.day) <= cutoff:
+                continue
+            if v["peak_mw"] is None or v["eolien_mw"] is None:
+                continue
+            vals.append(v["peak_mw"] - v["eolien_mw"] - (v["solaire_mw"] or 0))
+        vals.sort()
+        self._climat_residual_cache[key] = vals
+        return vals
+
+    def colder_days_ahead(self, target, residual):
+        """Jours restants attendus plus tendus que la cible.
+
+        C'est la question qu'EDF doit trancher : ce jour froid merite-t-il un Rouge,
+        ou en reste-t-il assez de plus froids pour depenser le quota plus tard ? Les
+        features existantes comparent le jour a la saison ECOULEE ; celle-ci le compare
+        a l'hiver qui RESTE, ce qui est la bonne question.
+        """
+        if residual != residual:
+            return float("nan")
+        vals = self._late_season_residuals(
+            calendrier.season_of(target), target.month, target.day)
+        if len(vals) < 30:
+            return float("nan")
+        share = 1.0 - np.searchsorted(vals, residual) / len(vals)
+        return float(_remaining_rouge_days(target + timedelta(days=1)) * share)
+
+
 _ROUGE_DAYS_CACHE = {}
 
 
@@ -541,6 +673,30 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
     rouge_days_left = _remaining_rouge_days(target)
     days_left_season = (calendrier.season_end(state["season"]) - target).days + 1
 
+    # Cote offre : ce que le parc nucleaire a recemment su fournir, et l'ecart au
+    # niveau habituel de ce mois. La marge qui en decoule est partielle (le reste du
+    # parc pilotable manque) mais elle va dans le bon sens : demande moins offre.
+    nuclear_recent = store.nuclear_recent(run_date)
+    nuclear_normal = store.nuclear_normal(run_date)
+    nuclear_anomaly = (nuclear_recent - nuclear_normal
+                       if nuclear_recent == nuclear_recent and nuclear_normal == nuclear_normal
+                       else float("nan"))
+    margin_proxy = (nuclear_recent - residual_mw
+                    if nuclear_recent == nuclear_recent and residual_mw == residual_mw
+                    else float("nan"))
+
+    # Prevision de RTE pour le lendemain : disponible au seul horizon J+1.
+    rte_forecast = store.rte_forecast(target, horizon)
+    rte_gap = (rte_forecast - peak_mw_pred
+               if rte_forecast == rte_forecast and peak_mw_pred == peak_mw_pred
+               else float("nan"))
+
+    # Arbitrage budgetaire : le quota Rouge restant face aux jours encore a venir
+    # qui seront vraisemblablement plus tendus que celui-ci.
+    colder_ahead = store.colder_days_ahead(target, residual_mw)
+    budget_ratio = (state["rouge_left"] / (1.0 + colder_ahead)
+                    if colder_ahead == colder_ahead else float("nan"))
+
     xmas = int((target.month == 12 and target.day >= 20) or (target.month == 1 and target.day <= 3))
     holiday_adj = int(calendrier.is_holiday(target - timedelta(days=1))
                       or calendrier.is_holiday(target + timedelta(days=1)))
@@ -575,6 +731,9 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         is_peak_net_window, net_pct_season, wind_window_mean,
         peak_mw_pred, wind_mw_pred, residual_mw, residual_rank_window,
         residual_pct_season, residual_vs_season_max,
+        nuclear_recent, nuclear_anomaly, margin_proxy,
+        rte_forecast, rte_gap,
+        colder_ahead, budget_ratio,
     ]
     return np.array(row, dtype=float)
 

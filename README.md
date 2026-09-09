@@ -116,6 +116,61 @@ plusieurs mises en commun. Les deux fois il s'effondrait au plancher et noyait l
 les fausses alertes : le coût d'une fausse alerte n'est pas mesurable par le modèle, il
 n'appartient qu'à l'utilisateur. D'où un réglage explicite.
 
+## Quel pourcentage, sur quel dénominateur ?
+
+Un taux de réussite calculé sur l'année entière ne veut pas dire grand-chose : d'avril à
+octobre la réponse est Bleu d'avance, et ces mois-là gonflent le score sans que le modèle
+ait rien risqué. L'onglet Historique propose donc trois dénominateurs, et l'écart entre
+eux est l'information :
+
+| Période | Ce qu'elle contient |
+|---|---|
+| Toute l'année | flatteur — inclut les mois sans enjeu |
+| Novembre → mars | la fenêtre où un Rouge est possible |
+| Jours éligibles | lundi-vendredi, novembre à mars, hors fériés — **le seul honnête** |
+
+C'est sur le dernier que le modèle a réellement un choix à faire, et c'est là qu'apparaît
+la pente par échéance que la moyenne annuelle masquait entièrement.
+
+## Ce que ça rapporte, en euros
+
+```bash
+python analyse_euros.py --kwh 8 --gene 1.00
+```
+
+Le seuil d'alerte se réglait jusqu'ici à l'aveugle, faute de pouvoir chiffrer une fausse
+alerte. La moitié du problème est pourtant chiffrable : décaler un kWh d'heure pleine
+vers l'heure creuse un jour Rouge vaut **0,568 €**. Ce qui ne l'est pas, c'est la *gêne*
+de s'être organisé pour rien — alors on ne l'invente pas, on balaye sa valeur et on
+regarde comment le seuil optimal se déplace avec elle.
+
+Le script compare aussi trois stratégies à rendement égal : tout décaler tous les jours,
+suivre le modèle, ou disposer d'un oracle. Ce qui compte n'est pas le total en euros
+(tout décaler gagne toujours le plus, au prix d'une année entière de contrainte) mais ce
+que rapporte **chaque jour de contrainte consenti**.
+
+## Où en est le modèle
+
+Trois signaux ont été ajoutés là où les mesures montraient un manque :
+
+- **Le côté offre.** Tout le reste décrit la demande, alors qu'un jour Rouge naît d'une
+  *marge* tendue. La puissance nucléaire récemment appelée (`nucleaire` d'éCO2mix, donc
+  toujours sans clé) et son écart au niveau habituel du mois donnent enfin une idée de ce
+  que le parc peut fournir — ce que le froid seul n'explique pas.
+- **La prévision de consommation de RTE**, déjà collectée mais jamais lue. Elle n'existe
+  qu'à J+1 et reste NaN au-delà : la propager donnerait au backtest une information que
+  la production n'aura jamais.
+- **L'hiver restant.** Les features comparaient le jour à la saison *écoulée* ; celle-ci
+  le compare à ce qu'il *reste*, estimé sur les seules saisons antérieures. C'est
+  l'arbitrage qu'EDF fait — ce jour froid mérite-t-il un Rouge, ou en reste-t-il assez de
+  plus froids pour dépenser le quota plus tard ?
+
+Pour savoir si la météo sert vraiment, et à quelle échéance :
+
+```bash
+python diagnostic_meteo.py   # permutation par groupe de features
+```
+
 ## Honnêteté du backtest
 
 Le piège classique serait de rejouer le passé avec la météo réellement observée : le modèle
@@ -127,8 +182,15 @@ sur l'erreur de prévision réellement mesurée, et sont exclues de l'évaluatio
 
 ```bash
 python -m src.backtest   # rejeu walk-forward + critères de viabilité
-python run_tests.py      # règles métier vérifiées contre 6 saisons réelles
+python run_tests.py      # règles métier + pipeline
 ```
+
+`run_tests.py` mêle deux familles. `tests/test_rules.py` confronte les règles Tempo aux
+**vraies** couleurs collectées : sans base constituée il se saute, plutôt que d'échouer
+pour une raison qui n'est pas un bug. `tests/test_pipeline.py` tourne sur une base
+synthétique (`tests/fixtures.py`) et doit passer partout — il vérifie ce qui casse en
+silence : une feature ajoutée sans son nom, une valeur qui regarde vers l'avenir, un
+filtre qui ne filtre pas.
 
 ## Règles Tempo encodées (vérifiées sur 2020-2026)
 
@@ -148,7 +210,9 @@ ingest.py      collecte historique (à lancer une fois)
 collector.py   pipeline quotidien : couleurs + météo + prédictions figées
 app.py         serveur web (onglets Prévisions / Historique)
 backfill.py    rejoue le backtest dans l'historique de la page
-analyse_seuils.py  balayage du seuil d'alerte Rouge sur 5 saisons
+analyse_seuils.py  balayage des seuils d'alerte Rouge et Blanc sur 5 saisons
+analyse_euros.py   ce que la prediction rapporte, et a quel prix en contrainte
+diagnostic_meteo.py  d'ou vient reellement l'information, par echeance
 src/rules.py   contraintes contractuelles Tempo
 src/features.py construction des features, strictement point-in-time
 src/model.py   baseline climatologique + GBM calibré

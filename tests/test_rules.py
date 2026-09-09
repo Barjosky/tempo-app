@@ -10,9 +10,30 @@ from src.sources import calendrier
 
 
 def load_real_days():
-    conn = db.connect()
-    return [dict(r) for r in conn.execute(
-        "SELECT * FROM days WHERE color IS NOT NULL ORDER BY date")]
+    """Les vraies couleurs collectees. Absentes tant que `ingest.py` n'a pas tourne.
+
+    Ces tests confrontent les regles metier a la realite observee : sans donnees
+    reelles ils n'ont rien a verifier, et se sauter vaut mieux qu'echouer -- un test
+    rouge doit signaler un vrai probleme, pas une base pas encore constituee.
+    """
+    import sqlite3
+    try:
+        conn = db.connect()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM days WHERE color IS NOT NULL ORDER BY date")]
+    except sqlite3.OperationalError as exc:
+        # `db.connect()` cree le fichier au passage : son existence ne prouve donc
+        # rien, seule la lecture dit si la base a ete constituee.
+        raise _skip(f"base non constituee ({exc})") from None
+    if not rows:
+        raise _skip("aucune couleur en base")
+    return rows
+
+
+def _skip(raison):
+    """Signale un test sans objet, du type attendu par run_tests.py s'il est la."""
+    runner = sys.modules.get("__main__")
+    return getattr(runner, "Skip", RuntimeError)(raison)
 
 
 def test_aucun_rouge_le_weekend_ou_ferie():
@@ -77,6 +98,7 @@ def test_les_probabilites_masquees_sont_renormalisees():
 def test_features_sans_fuite_temporelle():
     """Les quotas connus a la date R ne doivent integrer aucune couleur posterieure a R."""
     from src import features
+    load_real_days()  # se saute proprement si la base n'est pas constituee
     conn = db.connect()
     store = features.FeatureStore(conn)
     run_date = date(2025, 1, 15)

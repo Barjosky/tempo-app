@@ -35,11 +35,35 @@ def train(conn, store=None, class_weight=None, rouge_threshold=None):
     return gbm, version
 
 
+class ModeleObsolete(RuntimeError):
+    """Le modele enregistre n'a pas ete entraine sur les features actuelles."""
+
+
 def load(conn=None):
     if not MODEL_PATH.exists():
         raise FileNotFoundError("Modele absent : lancer `python collector.py --train`")
     bundle = joblib.load(MODEL_PATH)
+    # Un modele entraine avant l'ajout d'une feature attend un nombre de colonnes qui
+    # n'existe plus. Sans ce controle il predirait sur des colonnes decalees, en
+    # silence : mieux vaut refuser de servir que servir n'importe quoi.
+    connues = bundle.get("features")
+    if connues != features.FEATURE_NAMES:
+        manquantes = set(features.FEATURE_NAMES) - set(connues or [])
+        raise ModeleObsolete(
+            f"modele entraine sur {len(connues or [])} features, le code en produit "
+            f"{len(features.FEATURE_NAMES)}"
+            + (f" (nouvelles : {', '.join(sorted(manquantes))})" if manquantes else "")
+            + " -- relancer `python collector.py --train`")
     return bundle["model"], bundle["version"]
+
+
+def besoin_d_entrainement():
+    """Vrai si aucun modele utilisable n'est disponible en l'etat."""
+    try:
+        load()
+        return False
+    except (FileNotFoundError, ModeleObsolete, KeyError):
+        return True
 
 
 def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
@@ -65,7 +89,7 @@ def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
         return []
 
     probs = gbm.predict_proba(np.array(X), meta)
-    colors = model.decide(probs, gbm.rouge_threshold)
+    colors = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
     now = datetime.now().isoformat(timespec="seconds")
 
     for i, m in enumerate(meta):

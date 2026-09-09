@@ -293,3 +293,35 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
   .t-row b { font-size: 12.5px; }
   .temp { font-size: 11px; }
 }
+
+/* ---------- periode d'evaluation ---------- */
+.period-note {
+  margin: -6px 0 20px; color: var(--fg-dim); font-size: 12.5px; line-height: 1.55;
+  max-width: 78ch;
+}
+
+/* ---------- fiabilite des probabilites ---------- */
+.reliability { display: grid; gap: 7px; }
+.rel-row {
+  display: grid; grid-template-columns: 66px 1fr 116px 62px; gap: 12px; align-items: center;
+  font-family: var(--mono); font-size: 11.5px;
+}
+.rel-bin { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.rel-bars { display: grid; gap: 3px; }
+.rel-bars i { display: block; height: 7px; border-radius: 4px; min-width: 2px; }
+.rel-said { background: var(--fg-dim); }
+.rel-got { background: var(--rouge); }
+.rel-val { text-align: right; font-variant-numeric: tabular-nums; }
+.rel-n { text-align: right; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+/* Un ecart de plus de 20 points entre l'annonce et le reel se voit. */
+.rel-row.is-off .rel-val { color: var(--amber); }
+.rel-key {
+  display: flex; gap: 18px; margin-top: 12px; font-size: 11px; color: var(--fg-dim);
+}
+.rel-key span { display: flex; align-items: center; gap: 7px; }
+.rel-key i { width: 16px; height: 7px; border-radius: 4px; display: block; }
+
+@media (max-width: 640px) {
+  .rel-row { grid-template-columns: 56px 1fr 92px; }
+  .rel-n { display: none; }
+}

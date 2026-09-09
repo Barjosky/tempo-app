@@ -1,7 +1,7 @@
 const COLORS = { 1: "#3b82f6", 2: "#e9edf2", 3: "#ef4444" };
 const NAMES = { 1: "Bleu", 2: "Blanc", 3: "Rouge" };
 const DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-const state = { source: "all", horizon: "" };
+const state = { source: "all", horizon: "", period: "all" };
 
 const fmtDate = (iso) => {
   const d = new Date(iso + "T00:00:00");
@@ -20,6 +20,7 @@ let staticMode = false;
 function staticFile(endpoint, params) {
   if (endpoint === "forecast") return "forecast";
   const parts = [endpoint, params.source || "all"];
+  if (params.period && params.period !== "all") parts.push(params.period);
   if (params.horizon) parts.push("h" + params.horizon);
   return parts.join("_");
 }
@@ -184,6 +185,25 @@ document.querySelectorAll("#source-filter button").forEach((b) => {
     loadHistory();
   });
 });
+/* Le denominateur decide de ce que « 90 % de reussite » veut dire : sur l'annee
+   entiere il est porte par des mois ou la reponse est Bleu d'avance. */
+const PERIOD_NOTES = {
+  all: "Toutes les prédictions, y compris d'avril à octobre où la réponse est Bleu " +
+       "d'avance : le taux de réussite y est mécaniquement flatté.",
+  hiver: "Novembre à mars, la fenêtre où un jour Rouge est possible.",
+  eligibles: "Uniquement les jours où le Rouge est contractuellement possible " +
+             "(lundi-vendredi, novembre à mars, hors jours fériés). C'est le seul " +
+             "dénominateur où le modèle a vraiment un choix à faire.",
+};
+document.querySelectorAll("#period-filter button").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#period-filter button")
+      .forEach((x) => x.classList.toggle("is-active", x === b));
+    state.period = b.dataset.period;
+    loadHistory();
+  });
+});
+
 const horizonSelect = document.getElementById("horizon-filter");
 for (let h = 1; h <= 10; h++) horizonSelect.add(new Option("J+" + h, h));
 horizonSelect.addEventListener("change", () => { state.horizon = horizonSelect.value; loadHistory(); });
@@ -192,10 +212,11 @@ let historyToken = 0;
 
 async function loadHistory() {
   const token = ++historyToken;
-  const params = { source: state.source };
+  const params = { source: state.source, period: state.period };
   if (state.horizon) params.horizon = state.horizon;
+  document.getElementById("period-note").textContent = PERIOD_NOTES[state.period];
   const [rows, acc] = await Promise.all([
-    loadJson("history", { ...params, limit: 400 }),
+    loadJson("history", { ...params, limit: 200 }),
     loadJson("accuracy", params),
   ]);
   if (token !== historyToken) return; // un filtre plus recent a ete demande entre-temps
@@ -230,6 +251,8 @@ async function loadHistory() {
         `<div class="${i === j ? "diag" : ""}" style="background:rgba(59,130,246,${0.08 + 0.5 * v / max})">${v}</div>`
       ).join("")).join("");
 
+  renderReliability(acc.reliability || []);
+
   const tbody = document.querySelector("#history-table tbody");
   tbody.innerHTML = rows.length ? rows.map((r) => `
     <tr class="${r.correct || r.official ? "" : "miss"}">
@@ -240,6 +263,31 @@ async function loadHistory() {
       <td class="src">${r.official ? "officiel" : r.backtest ? "backtest" : "temps réel"}</td>
     </tr>`).join("")
     : '<tr><td colspan="8" class="empty">Aucune prédiction évaluable pour ce filtre.</td></tr>';
+}
+
+/* Fiabilite : l'ecart entre ce qui est annonce et ce qui tombe. Deux barres par
+   tranche valent mieux qu'une courbe ici -- on lit l'ecart, pas la tendance. */
+function renderReliability(bins) {
+  const box = document.getElementById("reliability");
+  if (!bins.length) {
+    box.innerHTML = '<p class="empty">Pas encore assez de prédictions pour mesurer.</p>';
+    return;
+  }
+  const max = Math.max(...bins.map((b) => Math.max(b.predicted, b.observed)), 0.1);
+  box.innerHTML = bins.map((b) => {
+    const gap = Math.abs(b.predicted - b.observed);
+    return `<div class="rel-row${gap > 0.2 ? " is-off" : ""}">
+      <span class="rel-bin">${b.bin}</span>
+      <span class="rel-bars">
+        <i class="rel-said" style="width:${(b.predicted / max) * 100}%"></i>
+        <i class="rel-got" style="width:${(b.observed / max) * 100}%"></i>
+      </span>
+      <span class="rel-val">${pct(b.predicted)} → ${pct(b.observed)}</span>
+      <span class="rel-n">n=${b.n}</span>
+    </div>`;
+  }).join("") +
+    '<div class="rel-key"><span><i class="rel-said"></i>annoncé</span>' +
+    '<span><i class="rel-got"></i>observé</span></div>';
 }
 
 loadForecast();

@@ -121,7 +121,7 @@ def main():
     print(f"Consommation reelle (eCO2mix) : {n_conso} jours")
 
     store = features.FeatureStore(conn)
-    if "--train" in sys.argv or not predict.MODEL_PATH.exists():
+    if "--train" in sys.argv or predict.besoin_d_entrainement():
         gbm, version = predict.train(conn, store=store)
         print(f"Modele entraine : {version} (seuil alerte rouge {gbm.rouge_threshold:.2f})")
 
