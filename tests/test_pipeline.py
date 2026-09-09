@@ -97,6 +97,34 @@ def test_le_rouge_prime_sur_le_blanc():
     assert out[0] == config.ROUGE
 
 
+def test_une_source_absente_n_empeche_pas_d_entrainer():
+    """Une colonne entierement vide ne doit pas faire echouer l'entrainement.
+
+    Vecu en production : la colonne `nucleaire_mw` venait d'etre ajoutee et n'etait
+    remplie nulle part, les trois features d'offre sortaient donc NaN partout, et le
+    binning de scikit-learn s'effondrait sur « window shape cannot be larger than
+    input array shape ». Une source pas encore collectee doit rendre sa feature sans
+    effet, pas empecher le modele de demarrer.
+    """
+    s = store()
+    X, y, meta = features.build_dataset(
+        s, date(2021, 9, 1), date(2023, 8, 31), horizons=range(1, 4))
+    assert len(X) > 100
+
+    # On vide integralement trois colonnes, comme si leur source manquait.
+    morts = [features.FEATURE_NAMES.index(n)
+             for n in ("nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw")]
+    X = X.copy()
+    X[:, morts] = np.nan
+    assert np.isnan(X[:, morts]).all()
+
+    gbm = model.TempoModel().fit(X, y, meta)
+    probs = gbm.predict_proba(X[:5], meta[:5])
+    assert probs.shape == (5, 3)
+    assert np.allclose(probs.sum(axis=1), 1.0)
+    assert list(gbm.dead_columns.nonzero()[0]) == sorted(morts)
+
+
 def test_les_periodes_sont_embiquees():
     """« eligibles » est inclus dans « hiver », lui-meme inclus dans « tout »."""
     import app as web

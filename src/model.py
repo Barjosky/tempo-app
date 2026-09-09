@@ -82,6 +82,7 @@ class TempoModel:
         self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
                                 else blanc_threshold)
         self.clf = None
+        self.dead_columns = None
 
     def _base(self):
         return HistGradientBoostingClassifier(
@@ -99,12 +100,38 @@ class TempoModel:
         clf.fit(X, y)
         return clf
 
+    def _neutralise(self, X):
+        """Neutralise les colonnes entierement vides.
+
+        Une feature dont la source n'a pas encore ete collectee sort NaN sur toutes
+        les lignes. Le GBM sait pourtant traiter des NaN epars -- mais son binning
+        echoue sur une colonne INTEGRALEMENT vide (« window shape cannot be larger
+        than input array shape »), au lieu de l'ignorer. On y met une constante : un
+        arbre n'y trouve aucune coupure, la feature est donc sans effet, et le modele
+        reste entrainable avec une source de donnees absente plutot que de refuser de
+        demarrer. Les colonnes neutralisees sont figees a l'entrainement, sinon la
+        prediction sur une seule ligne en declarerait d'autres au hasard des NaN.
+        """
+        X = np.asarray(X, dtype=float)
+        if self.dead_columns is None:
+            self.dead_columns = np.isnan(X).all(axis=0)
+            vides = [features.FEATURE_NAMES[i]
+                     for i, mort in enumerate(self.dead_columns)
+                     if mort and i < len(features.FEATURE_NAMES)]
+            if vides:
+                print(f"  features sans donnees, neutralisees : {', '.join(vides)}")
+        if self.dead_columns.any():
+            X = X.copy()
+            X[:, self.dead_columns] = 0.0
+        return X
+
     def fit(self, X, y, meta):
-        self.clf = self._fit_calibrated(X, np.array(y), meta)
+        self.dead_columns = None
+        self.clf = self._fit_calibrated(self._neutralise(X), np.array(y), meta)
         return self
 
     def predict_proba(self, X, meta):
-        raw = self.clf.predict_proba(X)
+        raw = self.clf.predict_proba(self._neutralise(X))
         ordered = np.zeros((len(X), 3))
         for i, cls in enumerate(self.clf.classes_):
             ordered[:, CLASSES.index(int(cls))] = raw[:, i]
