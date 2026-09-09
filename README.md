@@ -79,6 +79,23 @@ et republie chaque jour à 10h30 UTC, après l'annonce RTE de 11h. La base et le
 (23 Mo) restent hors de git, dans le cache Actions — les commiter chaque jour ferait
 grossir l'historique d'environ 2 Go par an.
 
+## Tarifs affichés
+
+Chaque journée porte son prix du kWh — heures pleines et heures creuses — pour que la
+couleur se lise en euros et pas seulement en code couleur. Un jour Rouge affiche en plus
+son rapport au jour Bleu : à la grille d'août 2026, l'heure pleine rouge coûte **4,4 fois**
+l'heure pleine bleue.
+
+La grille vit dans `config.TARIFFS` : tarif réglementé TTC, puissance 9 kVA, heures creuses
+22 h → 6 h (identiques partout en France sous l'option Tempo). **Elle doit être remise à jour
+à chaque mouvement du tarif réglementé**, en général le 1er février et le 1er août ; la date
+du barème est affichée sous le tableau pour que rien ne passe pour actuel à tort. Les prix
+ne sont pas récupérés automatiquement : aucune source libre ne les publie de façon stable.
+
+Le quota Bleu n'est pas un chiffre contractuel publié par EDF — c'est le solde des deux
+autres sur la durée réelle de la saison : 300 jours d'ordinaire, 301 quand un 29 février
+tombe dedans.
+
 ## Le seuil d'alerte Rouge est un arbitrage, pas un réglage
 
 Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré sur 5 saisons :
