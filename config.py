@@ -16,6 +16,22 @@ COLOR_NAMES = {BLEU: "Bleu", BLANC: "Blanc", ROUGE: "Rouge"}
 # Quotas contractuels sur une annee Tempo (1er sept -> 31 aout)
 QUOTA_BLANC = 43
 QUOTA_ROUGE = 22
+# EDF ne publie pas de quota Bleu : c'est le solde des deux autres. Il vaut 300 les
+# saisons ordinaires et 301 quand un 29 fevrier tombe dedans, d'ou un calcul plutot
+# qu'une constante (voir app.season_summary).
+
+# Grille tarifaire Tempo, TTC, puissance 9 kVA (la plus repandue chez les
+# particuliers). Bareme EDF en vigueur au 1er aout 2026 : a reactualiser a chaque
+# mouvement du tarif reglemente (typiquement le 1er fevrier et le 1er aout).
+# Les heures creuses Tempo sont les memes partout en France : 22h -> 6h.
+TARIFF_LABEL = "Tarif reglemente TTC, 9 kVA"
+TARIFF_EFFECTIVE = "1er aout 2026"
+TARIFF_OFFPEAK_HOURS = "22h-6h"
+TARIFFS = {
+    BLEU: {"hc": 0.1356, "hp": 0.1654},
+    BLANC: {"hc": 0.1536, "hp": 0.1921},
+    ROUGE: {"hc": 0.1615, "hp": 0.7295},
+}
 
 SEASON_START_MONTH = 9
 FIRST_SEASON = 2020  # profondeur de l'historique disponible via l'API

@@ -6,7 +6,7 @@
 <title>Tempo — prévisions 10 jours</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -33,23 +33,44 @@
 
 <main>
   <section id="panel-forecast" class="panel is-active">
-    <aside class="quotas">
-      <h2>Saison <span id="season-label">—</span></h2>
-      <div class="gauge" data-color="rouge">
-        <div class="gauge-head"><span>Rouges restants</span><strong id="rouge-left">—</strong></div>
-        <div class="track"><i id="rouge-bar"></i></div>
-        <small><span id="rouge-used">0</span> / 22 consommés</small>
+    <aside class="side">
+      <div class="side-block">
+        <h2>Saison <span id="season-label">—</span></h2>
+        <p class="side-intro">Jours restants avant épuisement des quotas.</p>
+        <div class="gauge" data-color="bleu">
+          <div class="gauge-head"><span>Bleus restants</span><strong id="bleu-left">—</strong></div>
+          <div class="track"><i id="bleu-bar"></i></div>
+          <small><span id="bleu-used">0</span> / <span id="bleu-quota">300</span> consommés</small>
+        </div>
+        <div class="gauge" data-color="blanc">
+          <div class="gauge-head"><span>Blancs restants</span><strong id="blanc-left">—</strong></div>
+          <div class="track"><i id="blanc-bar"></i></div>
+          <small><span id="blanc-used">0</span> / <span id="blanc-quota">43</span> consommés</small>
+        </div>
+        <div class="gauge" data-color="rouge">
+          <div class="gauge-head"><span>Rouges restants</span><strong id="rouge-left">—</strong></div>
+          <div class="track"><i id="rouge-bar"></i></div>
+          <small><span id="rouge-used">0</span> / <span id="rouge-quota">22</span> consommés</small>
+        </div>
       </div>
-      <div class="gauge" data-color="blanc">
-        <div class="gauge-head"><span>Blancs restants</span><strong id="blanc-left">—</strong></div>
-        <div class="track"><i id="blanc-bar"></i></div>
-        <small><span id="blanc-used">0</span> / 43 consommés</small>
+
+      <div class="side-block">
+        <h2>Prix du kWh</h2>
+        <table class="tariff-grid" id="tariff-grid">
+          <thead><tr><th>Jour</th><th>Creuses</th><th>Pleines</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="side-foot" id="tariff-foot">—</p>
       </div>
-      <p class="note">Seul J+1 est publié officiellement par RTE (vers 11h). Au-delà, ce sont
+
+      <p class="note">Seul J+1 est publié officiellement par RTE (vers 11 h). Au-delà, ce sont
         des probabilités : la confiance décroît avec l'échéance.</p>
     </aside>
 
-    <div class="days" id="days"></div>
+    <div class="forecast-main">
+      <div id="alert-strip"></div>
+      <div class="days" id="days"></div>
+    </div>
   </section>
 
   <section id="panel-history" class="panel">

@@ -23,11 +23,28 @@ def season_summary(conn, today=None):
         "SELECT color, COUNT(*) n FROM days WHERE season = ? AND color IS NOT NULL GROUP BY color",
         (season,)).fetchall()
     counts = {r["color"]: r["n"] for r in rows}
+    # Le quota Bleu est le solde des deux autres sur la duree reelle de la saison :
+    # 300 jours d'ordinaire, 301 quand un 29 fevrier tombe dedans.
+    duree = (calendrier.season_end(season) - calendrier.season_start(season)).days + 1
+    quota_bleu = duree - config.QUOTA_BLANC - config.QUOTA_ROUGE
     return {
         "season": season,
+        "quota_bleu": quota_bleu,
+        "quota_blanc": config.QUOTA_BLANC,
+        "quota_rouge": config.QUOTA_ROUGE,
         "rouge_used": counts.get(3, 0), "rouge_left": config.QUOTA_ROUGE - counts.get(3, 0),
         "blanc_used": counts.get(2, 0), "blanc_left": config.QUOTA_BLANC - counts.get(2, 0),
-        "bleu_used": counts.get(1, 0),
+        "bleu_used": counts.get(1, 0), "bleu_left": quota_bleu - counts.get(1, 0),
+    }
+
+
+def tariff_payload():
+    """Grille tarifaire servie a la page, pour afficher le prix de chaque journee."""
+    return {
+        "label": config.TARIFF_LABEL,
+        "effective": config.TARIFF_EFFECTIVE,
+        "offpeak_hours": config.TARIFF_OFFPEAK_HOURS,
+        "by_color": {str(c): v for c, v in config.TARIFFS.items()},
     }
 
 
@@ -82,7 +99,8 @@ def forecast():
         it["tmean"] = round(w["tmean"], 1) if w else None
         it["tmin"] = round(w["tmin"], 1) if w else None
         it["tmax"] = round(w["tmax"], 1) if w else None
-    return jsonify({"run_date": last_run, "days": items, "season": season_summary(conn)})
+    return jsonify({"run_date": last_run, "days": items,
+                    "season": season_summary(conn), "tariffs": tariff_payload()})
 
 
 @app.get("/api/history")

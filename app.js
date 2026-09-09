@@ -8,6 +8,8 @@ const fmtDate = (iso) => {
   return { dow: DOW[(d.getDay() + 6) % 7], num: d.getDate(), month: d.toLocaleDateString("fr-FR", { month: "short" }) };
 };
 const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
+const euro = (x) => x.toFixed(4).replace(".", ",");
+const deg = (x) => String(x).replace(".", ",") + "\u00b0";
 
 /* ---------- acces aux donnees ----------
    La page tourne dans deux contextes : en local derriere le serveur Flask, et en
@@ -50,49 +52,124 @@ document.querySelectorAll(".tab").forEach((tab) => {
 });
 
 /* ---------- previsions ---------- */
+/* La grille tarifaire vient de l'API (config.TARIFFS). Une page servie par un
+   export anterieur a son ajout n'en a pas : on affiche alors les couleurs sans prix
+   plutot que d'inventer un bareme perime. */
+let tariffs = null;
+
+function renderTariffGrid() {
+  const body = document.querySelector("#tariff-grid tbody");
+  const foot = document.getElementById("tariff-foot");
+  if (!tariffs) {
+    document.getElementById("tariff-grid").hidden = true;
+    foot.textContent = "Grille tarifaire indisponible.";
+    return;
+  }
+  body.innerHTML = [1, 2, 3].map((c) => {
+    const t = tariffs.by_color[c];
+    return `<tr data-color="${c}">
+      <th scope="row"><span class="dot" style="background:${COLORS[c]}"></span>${NAMES[c]}</th>
+      <td>${euro(t.hc)}</td><td class="hp">${euro(t.hp)}</td></tr>`;
+  }).join("");
+  foot.innerHTML = `€/kWh · ${tariffs.label}<br>barème du ${tariffs.effective}
+    · heures creuses ${tariffs.offpeak_hours}`;
+}
+
+/* Le rapport au jour Bleu dit mieux que le prix brut ce que coute un jour Rouge. */
+function ratioToBleu(color) {
+  if (!tariffs || color === 1) return null;
+  const r = tariffs.by_color[color].hp / tariffs.by_color[1].hp;
+  return r < 1.15 ? null : "×" + r.toFixed(1).replace(".", ",");
+}
+
+function tariffBlock(color) {
+  if (!tariffs) return "";
+  const t = tariffs.by_color[color];
+  const ratio = ratioToBleu(color);
+  return `
+    <div class="tariff">
+      <div class="t-row"><span>Pleines</span>
+        <b>${euro(t.hp)} €</b>${ratio ? `<em>${ratio}</em>` : ""}</div>
+      <div class="t-row t-hc"><span>Creuses</span><b>${euro(t.hc)} €</b></div>
+    </div>`;
+}
+
+/* Un jour Rouge probable est l'information qui fait agir : on la sort des cartes. */
+function renderAlert(days) {
+  const strip = document.getElementById("alert-strip");
+  const rouges = days.filter((d) => d.color === 3);
+  if (!rouges.length) { strip.innerHTML = ""; return; }
+  const items = rouges.map((d) => {
+    const f = fmtDate(d.date);
+    const quand = d.horizon === 0 ? "aujourd'hui" : `${f.dow} ${f.num} ${f.month}`;
+    return d.official ? `<b>${quand}</b> (officiel)`
+                      : `<b>${quand}</b> (${pct(d.p[2])})`;
+  });
+  strip.innerHTML = `<div class="alert">
+      <span class="alert-mark" aria-hidden="true"></span>
+      <div><strong>${rouges.length} jour${rouges.length > 1 ? "s" : ""} Rouge</strong>
+        sur les 10 prochains jours : ${items.join(" · ")}.
+        ${tariffs ? `Heures pleines à <b>${euro(tariffs.by_color[3].hp)} €</b>/kWh.` : ""}</div>
+    </div>`;
+}
+
+function fillGauge(color, used, quota) {
+  document.getElementById(color + "-left").textContent = quota - used;
+  document.getElementById(color + "-used").textContent = used;
+  document.getElementById(color + "-quota").textContent = quota;
+  document.getElementById(color + "-bar").style.width = (used / quota) * 100 + "%";
+}
+
 async function loadForecast() {
   const data = await loadJson("forecast");
   document.getElementById("run-date").textContent = data.run_date || "aucun";
+  tariffs = data.tariffs || null;
+  renderTariffGrid();
+
   const s = data.season;
   if (s) {
     document.getElementById("season-label").textContent = s.season;
-    document.getElementById("rouge-left").textContent = s.rouge_left;
-    document.getElementById("blanc-left").textContent = s.blanc_left;
-    document.getElementById("rouge-used").textContent = s.rouge_used;
-    document.getElementById("blanc-used").textContent = s.blanc_used;
-    document.getElementById("rouge-bar").style.width = (s.rouge_used / 22) * 100 + "%";
-    document.getElementById("blanc-bar").style.width = (s.blanc_used / 43) * 100 + "%";
+    // bleu_left/quota_* datent de la meme version que les tarifs : on retombe sur
+    // les quotas contractuels si l'export servi est plus ancien.
+    fillGauge("bleu", s.bleu_used, s.quota_bleu || 300);
+    fillGauge("blanc", s.blanc_used, s.quota_blanc || 43);
+    fillGauge("rouge", s.rouge_used, s.quota_rouge || 22);
   }
 
   const box = document.getElementById("days");
   if (!data.days.length) {
-    box.innerHTML = '<p class="empty">Aucune prédiction. Lancez <code>python collector.py --train</code>.</p>';
+    box.innerHTML = '<p class="empty">Aucune pr\u00e9diction. Lancez <code>python collector.py --train</code>.</p>';
     return;
   }
+  renderAlert(data.days);
   box.innerHTML = data.days.map((d, i) => {
     const f = fmtDate(d.date);
     const temp = d.tmean == null ? "" :
-      `<div class="temp">température <b>${d.tmean}°</b> <span>(${d.tmin}° / ${d.tmax}°)</span></div>`;
+      `<div class="temp"><span>temp.</span> ${deg(d.tmean)}
+         <span>(${deg(d.tmin)} / ${deg(d.tmax)})</span></div>`;
     return `
       <article class="day" data-color="${d.color}" style="--col:${COLORS[d.color]};animation-delay:${i * 45}ms">
         <div class="day-head">
-          <div><span class="dow">${f.dow}</span> <span class="dnum">${f.num}</span>
+          <div class="date"><span class="dow">${f.dow}</span> <span class="dnum">${f.num}</span>
             <span class="dow">${f.month}</span></div>
-          <span class="horizon">${d.horizon === 0 ? "aujourd'hui" : "J+" + d.horizon}</span>
+          <span class="horizon">${d.horizon === 0 ? "auj." : "J+" + d.horizon}</span>
         </div>
         <div class="verdict">
           <span class="chip"></span><b>${d.color_name}</b>
           ${d.official ? '<span class="tag">officiel RTE</span>' : ""}
         </div>
+        ${tariffBlock(d.color)}
         ${!d.p ? "" : `
-        <div class="pbar">
-          <i class="b" style="width:${d.p[0] * 100}%"></i>
-          <i class="w" style="width:${d.p[1] * 100}%"></i>
-          <i class="r" style="width:${d.p[2] * 100}%"></i>
-        </div>
-        <div class="pmeta">
-          <span>B ${pct(d.p[0])}</span><span>Bl ${pct(d.p[1])}</span>
-          <span style="color:${d.p[2] > 0.15 ? "#ef4444" : ""}">R ${pct(d.p[2])}</span>
+        <div class="proba">
+          <div class="pbar">
+            <i class="b" style="width:${d.p[0] * 100}%"></i>
+            <i class="w" style="width:${d.p[1] * 100}%"></i>
+            <i class="r" style="width:${d.p[2] * 100}%"></i>
+          </div>
+          <div class="pmeta">
+            <span>Bleu ${pct(d.p[0])}</span><span>Blanc ${pct(d.p[1])}</span>
+            <span class="${d.p[2] > 0.15 ? "hot" : ""}">Rouge ${pct(d.p[2])}</span>
+          </div>
         </div>`}
         ${temp}
       </article>`;
