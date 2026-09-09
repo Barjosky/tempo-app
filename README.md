@@ -107,8 +107,10 @@ Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré s
 | 0,30 | 76 % | 11 | 66 % |
 | 0,50 | 61 % | 5 | 75 % |
 
-Réglable dans `config.ROUGE_ALERT_THRESHOLD`. Pour revoir le tableau complet avant de
-changer : `python analyse_seuils.py` (instantané, relit des probabilités mises en cache ;
+Réglable dans `config.ROUGE_ALERT_THRESHOLD`. **Ce tableau est à refaire** : il a été
+produit alors qu'`analyse_seuils.py` n'appelait pas `fit_demand_model`, et toutes les
+colonnes de charge résiduelle y sortaient donc vides. Le script est corrigé, les chiffres
+ci-dessus datent d'avant. Pour le régénérer : `python analyse_seuils.py` (instantané, relit des probabilités mises en cache ;
 `--refit` pour les recalculer).
 
 Un calage automatique de ce seuil a été essayé — sur une saison de validation, puis sur
@@ -123,14 +125,21 @@ octobre la réponse est Bleu d'avance, et ces mois-là gonflent le score sans qu
 ait rien risqué. L'onglet Historique propose donc trois dénominateurs, et l'écart entre
 eux est l'information :
 
-| Période | Ce qu'elle contient |
-|---|---|
-| Toute l'année | flatteur — inclut les mois sans enjeu |
-| Novembre → mars | la fenêtre où un Rouge est possible |
-| Jours éligibles | lundi-vendredi, novembre à mars, hors fériés — **le seul honnête** |
+| Période | Prédictions | Réussite | Ce qu'elle contient |
+|---|---|---|---|
+| Toute l'année | 14 610 | 88,8 % | flatteur — inclut les mois sans enjeu |
+| Novembre → mars | 6 050 | 76,7 % | la fenêtre où un Rouge est possible |
+| **Jours éligibles** | **4 190** | **69,3 %** | lundi-vendredi, nov-mars, hors fériés |
 
-C'est sur le dernier que le modèle a réellement un choix à faire, et c'est là qu'apparaît
-la pente par échéance que la moyenne annuelle masquait entièrement.
+Presque 20 points d'écart entre le premier chiffre et le dernier. C'est sur le dernier que
+le modèle a réellement un choix à faire.
+
+Ce dénominateur corrige aussi une lecture erronée. La précision paraissait *plate* d'une
+échéance à l'autre — 90,0 % à J+1 contre 88,0 % à J+10 — ce qui laissait croire que le
+modèle n'exploitait pas la précision des prévisions courtes. Sur les jours éligibles la
+pente apparaît : **73,3 % à J+1 contre 67,1 % à J+10**, soit trois fois plus. La platitude
+venait pour l'essentiel du dénominateur, pas du modèle. Le rappel Rouge, lui, reste bien
+plat (73 % à J+1, 74 % à J+10) : cette part de l'anomalie tient toujours.
 
 ## Ce que ça rapporte, en euros
 
@@ -149,9 +158,29 @@ suivre le modèle, ou disposer d'un oracle. Ce qui compte n'est pas le total en 
 (tout décaler gagne toujours le plus, au prix d'une année entière de contrainte) mais ce
 que rapporte **chaque jour de contrainte consenti**.
 
+## Fiabilité des probabilités
+
+L'onglet Historique compare désormais, tranche par tranche, la probabilité de Rouge
+annoncée à la fréquence réellement observée. Le constat, sur les jours éligibles :
+
+- **en dessous de 30 %, le modèle est trop prudent** — il annonce 15 %, il tombe 21 % ;
+  il annonce 25 %, il tombe 33 % ;
+- **entre 40 et 70 %, il est trop sûr de lui** — il annonce 55 %, il tombe 40 % ; il
+  annonce 65 %, il tombe 48 %.
+
+Ces écarts de 15 points passent tout juste le critère de viabilité (< 20 points). Ils
+n'étaient visibles nulle part avant.
+
 ## Où en est le modèle
 
-Trois signaux ont été ajoutés là où les mesures montraient un manque :
+Trois signaux ont été ajoutés là où les mesures montraient un manque. **Mesurés, ils
+n'ont pas encore payé** : le rappel Rouge passe de 75 % à 72 % et la réussite globale ne
+bouge pas (88,9 % → 88,8 %). Le rappel Blanc progresse de 39 % à 47 %, mais c'est le
+seuil Blanc qui le produit, pas les features. Ils sont conservés parce qu'ils décrivent
+des mécanismes réels et que leur apport se mesure maintenant (`diagnostic_meteo.py`) ;
+rien n'oblige à les garder si la mesure reste nulle.
+
+Les signaux en question :
 
 - **Le côté offre.** Tout le reste décrit la demande, alors qu'un jour Rouge naît d'une
   *marge* tendue. La puissance nucléaire récemment appelée (`nucleaire` d'éCO2mix, donc
