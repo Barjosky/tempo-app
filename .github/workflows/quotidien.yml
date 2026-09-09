@@ -64,15 +64,15 @@ jobs:
             python backfill.py
           fi
 
-      - name: Collecte du jour et prediction
-        run: python collector.py
-
-      # Les colonnes ajoutees apres coup restent vides dans une base deja constituee :
-      # la migration cree `nucleaire_mw`, mais seule une nouvelle collecte la remplit.
-      # Sans ce rattrapage, les features d'offre sortiraient en NaN sur tout l'historique.
+      # AVANT la collecte : `collector.py` reentraine de lui-meme quand le modele en
+      # cache est obsolete, et il le ferait sur une base ou `nucleaire_mw` est encore
+      # vide -- les predictions du jour sortiraient d'un modele sans donnees d'offre.
       - name: Recollecter la consommation (colonnes ajoutees depuis)
         if: inputs.reentrainer == true
         run: python ingest_conso.py
+
+      - name: Collecte du jour et prediction
+        run: python collector.py
 
       # Un changement de features rend le modele en cache obsolete : ses colonnes ne
       # correspondent plus. D'ou le declenchement manuel, en plus du lundi.
