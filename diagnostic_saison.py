@@ -71,6 +71,50 @@ def profil(store, saison, jours):
     }
 
 
+def repartition(store, saisons):
+    """Combien de Bleu, Blanc et Rouge, et ou ils tombent.
+
+    Le taux de base decide de ce qu'un modele doit apprendre. Sur l'annee entiere le
+    Bleu ecrase tout (82 %), mais sur les jours ouvres d'hiver il n'est plus qu'a la
+    moitie : une journee de travail sur deux y est deja chere. Un modele entraine sur
+    la premiere population et utilise sur la seconde travaille sur un decalage.
+    """
+    print("\nRepartition des couleurs (jours par saison, moyenne) :\n")
+    print(f"{'perimetre':<18} {'jours':>6}   {'Bleu':>14} {'Blanc':>14} {'Rouge':>14}")
+    perimetres = (
+        ("toute l'annee", lambda d: True),
+        ("novembre -> mars", lambda d: d.month in rules.ROUGE_MONTHS),
+        ("jours eligibles", lambda d: rules.rouge_possible(d)),
+    )
+    for label, garde in perimetres:
+        n = [0, 0, 0]
+        for saison, jours in saisons:
+            for d in jours:
+                if garde(d):
+                    n[store.days[d]["color"] - 1] += 1
+        n = [x / len(saisons) for x in n]
+        tot = sum(n)
+        cols = "  ".join(f"{x:>5.0f} ({x/tot:>4.0%})" for x in n)
+        print(f"{label:<18} {tot:>6.0f}   {cols}")
+
+    print("\nOu tombent les Blanc et les Rouge, par mois :\n")
+    print(f"{'mois':>6} " + " ".join(f"{m:>14}" for m in ("Bleu", "Blanc", "Rouge")))
+    par_mois = {}
+    for saison, jours in saisons:
+        for d in jours:
+            par_mois.setdefault(d.month, [0, 0, 0])[store.days[d]["color"] - 1] += 1
+    for mois in (9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8):
+        n = [x / len(saisons) for x in par_mois.get(mois, [0, 0, 0])]
+        if sum(n) == 0:
+            continue
+        tot = sum(n)
+        print(f"{mois:>6} " + " ".join(f"{x:>7.1f} ({x/tot:>4.0%})" for x in n))
+
+    print("\nLecture : le Blanc deborde la fenetre Rouge -- il tombe aussi en avril et")
+    print("en octobre, ou aucun Rouge n'est possible. Le quota Blanc ne se joue donc")
+    print("pas sur le meme calendrier que le quota Rouge.")
+
+
 def main():
     store = features.FeatureStore(db.connect())
     profils = {}
@@ -81,7 +125,9 @@ def main():
     if not profils:
         raise SystemExit("aucune saison complete : la base est-elle constituee ?")
 
-    print("Quand les jours Rouge tombent, saison par saison :\n")
+    repartition(store, list(saisons_completes(store)))
+
+    print("\nQuand les jours Rouge tombent, saison par saison :\n")
     print(f"{'saison':>12} {'n':>3} {'premier':>11} {'dernier':>11} "
           f"{'% en mars':>10}   repartition")
     for s, p in profils.items():
