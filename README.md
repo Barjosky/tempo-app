@@ -127,7 +127,7 @@ eux est l'information :
 
 | Période | Prédictions | Réussite | Ce qu'elle contient |
 |---|---|---|---|
-| Toute l'année | 14 610 | 88,8 % | flatteur — inclut les mois sans enjeu |
+| Toute l'année | 14 610 | 88,6 % | flatteur — inclut les mois sans enjeu |
 | Novembre → mars | 6 050 | 76,7 % | la fenêtre où un Rouge est possible |
 | **Jours éligibles** | **4 190** | **69,3 %** | lundi-vendredi, nov-mars, hors fériés |
 
@@ -171,14 +171,42 @@ annoncée à la fréquence réellement observée. Le constat, sur les jours éli
 Ces écarts de 15 points passent tout juste le critère de viabilité (< 20 points). Ils
 n'étaient visibles nulle part avant.
 
-## Où en est le modèle
+## Ce que chaque groupe de features apporte réellement
 
-Trois signaux ont été ajoutés là où les mesures montraient un manque. **Mesurés, ils
-n'ont pas encore payé** : le rappel Rouge passe de 75 % à 72 % et la réussite globale ne
-bouge pas (88,9 % → 88,8 %). Le rappel Blanc progresse de 39 % à 47 %, mais c'est le
-seuil Blanc qui le produit, pas les features. Ils sont conservés parce qu'ils décrivent
-des mécanismes réels et que leur apport se mesure maintenant (`diagnostic_meteo.py`) ;
-rien n'oblige à les garder si la mesure reste nulle.
+Mesuré par permutation sur trois saisons, jours éligibles uniquement. La colonne qui
+tranche est la **pire saison** : un groupe qui aide en moyenne mais nuit à un hiver
+n'est pas fiable, il est chanceux.
+
+| Groupe | +log-loss | bruit | pire saison | Verdict |
+|---|---|---|---|---|
+| **quotas** | **+0,120** | 0,025 | **+0,016** | **porteur** |
+| hiver restant | +0,078 | 0,017 | −0,015 | instable |
+| météo brute | +0,060 | 0,026 | −0,076 | instable |
+| charge résiduelle | +0,055 | 0,016 | −0,094 | instable |
+| renouvelables | +0,021 | 0,020 | −0,016 | indistinct |
+| horizon · RTE J+1 · froid relatif · calendrier | ≈ 0 | — | — | indistinct |
+| **offre (nucléaire)** | **−0,032** | 0,017 | −0,091 | **nuit au modèle** |
+
+**Un seul groupe est solidement porteur : les quotas.** Le modèle roule sur l'état de la
+saison — combien de Rouge restent, depuis quand, sous quelle pression — bien plus que sur
+la météo. `rouge_pressure` est d'ailleurs la seule feature individuelle porteuse sur les
+soixante (+0,080, positive dans les trois saisons).
+
+Ce que ça dit des trois signaux ajoutés :
+
+- **la disponibilité nucléaire nuit** : pire groupe des dix, négatif partout. L'idée était
+  bonne — un jour Rouge naît d'une marge tendue — mais la production appelée est un proxy
+  trop grossier de la puissance disponible.
+- **l'hiver restant est le plus prometteur** des trois (2ᵉ groupe), sans être fiable :
+  il abîme une saison sur trois.
+- **la prévision RTE J+1 ressort à zéro, mais la mesure est injuste** : cette feature
+  n'existe qu'à une échéance sur dix, donc permuter sa colonne ne touche que 10 % des
+  lignes. Il faudrait la mesurer à J+1 seulement pour conclure.
+
+Les composantes de la météo se masquent entre elles : le groupe aide, mais `hdd_f`,
+`temp_anomaly` et `hdd_rank_window` sont individuellement du poids mort — elles encodent
+toutes la même température. C'est le piège de la mesure feature par feature, et la raison
+pour laquelle le tableau par groupe passe en premier.
 
 Les signaux en question :
 
