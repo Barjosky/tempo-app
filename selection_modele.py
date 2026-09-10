@@ -129,14 +129,18 @@ def main():
                   f"{par_saison[-1][1]['logloss']:.3f}", flush=True)
         resultats[nom] = par_saison
 
+    # La precision des alertes Rouge etait calculee sans etre affichee. C'est
+    # pourtant la moitie de la question qu'on se pose devant la page : sur dix jours
+    # annonces Rouge, combien le sont vraiment ?
     print(f"\n{'candidat':>20} {'logloss moy':>12} {'PIRE logloss':>13} "
-          f"{'precision':>10} {'rappel R':>9} {'ecart calib':>12}")
+          f"{'exactitude':>11} {'rappel R':>9} {'prec. R':>8} {'ecart calib':>12}")
     for nom, _ in CANDIDATS:
         rs = [r for _, r in resultats[nom]]
         print(f"{nom:>20} {np.mean([r['logloss'] for r in rs]):>12.3f} "
               f"{max(r['logloss'] for r in rs):>13.3f} "
-              f"{np.mean([r['acc'] for r in rs]):>9.1%} "
+              f"{np.mean([r['acc'] for r in rs]):>10.1%} "
               f"{np.mean([r['rappel_r'] for r in rs]):>8.0%} "
+              f"{np.mean([r['prec_r'] for r in rs]):>7.0%} "
               f"{np.mean([r['calibration'] for r in rs]):>11.1%}")
 
     ref = max(r["logloss"] for _, r in resultats[CANDIDATS[0][0]])
