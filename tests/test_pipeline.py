@@ -333,3 +333,54 @@ def test_l_empreinte_des_assets_suit_leur_contenu():
         assert apres != premier, "l'empreinte n'a pas suivi le contenu"
         # Une seule empreinte par asset : pas d'accumulation de ?v= a chaque passage.
         assert apres.count("app.js?v=") == 1 and apres.count("?v=") == 2
+
+
+def test_les_deux_pressions_de_quota_sont_comparables():
+    """Blanc et Rouge doivent se mesurer sur la meme fenetre, sinon leur rapport ment.
+
+    `blanc_pressure` comptait les jours de CALENDRIER jusqu'au 31 aout, quand
+    `rouge_pressure` compte les jours ELIGIBLES jusqu'au 31 mars. Au 13 mars 2026 cela
+    faisait 147 jours contre 13 : un facteur dix, qui rendait tout arbitrage entre les
+    deux quotas illisible.
+    """
+    from src import rules
+
+    mars = date(2026, 3, 13)
+    fin_hiver = date(2026, 3, 31)
+
+    # Aucun dimanche ne doit entrer dans le compte des jours Blanc.
+    debut = date(2026, 3, 1)
+    dimanches = sum(1 for d in _jours(debut, fin_hiver) if d.weekday() == 6)
+    attendu = (fin_hiver - debut).days + 1 - dimanches
+    assert rules.remaining_blanc_days(debut, fin_hiver) == attendu
+
+    # Sur la fenetre hivernale, les deux comptes sont du meme ordre ; sur la saison
+    # entiere, non. C'est precisement ce qui rendait le rapport inutilisable.
+    hiver = rules.remaining_blanc_days(mars, fin_hiver)
+    saison = rules.remaining_blanc_days(mars)
+    rouge = rules.remaining_rouge_days(mars)
+    assert rouge <= hiver <= 2 * rouge, (rouge, hiver)
+    assert saison > 5 * hiver, (saison, hiver)
+
+    # Et le rapport doit disparaitre hors fenetre plutot que de valoir zero : passe le
+    # 31 mars aucun Rouge n'est possible, l'arbitrage n'a plus d'objet.
+    i = features.FEATURE_NAMES.index("quota_arbitrage")
+    store = _STORE["store"]
+    for cible, dedans in ((date(2026, 1, 15), True), (date(2026, 6, 15), False)):
+        run = cible - timedelta(days=3)
+        etat = store.season_state(run)
+        ligne = features.build_row(store, run, cible, etat,
+                                   np.random.default_rng(0), True)
+        if ligne is None:
+            continue
+        # bool() explicite : `ligne[i] == ligne[i]` rend un booleen NumPy, et
+        # `np.True_ is True` vaut faux -- le test passerait a cote de son sujet.
+        fini = bool(ligne[i] == ligne[i])    # False si NaN
+        assert fini is dedans, f"{cible} : arbitrage {'attendu' if dedans else 'de trop'}"
+
+
+def _jours(debut, fin):
+    d = debut
+    while d <= fin:
+        yield d
+        d += timedelta(days=1)

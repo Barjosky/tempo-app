@@ -66,9 +66,25 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 #   diversification (strictement sans effet).
 RETENU = dict(excluded=[], force_quota=True, n_seeds=5)
 
+ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
+
+# La cible du jour est le Blanc, seule couleur sous les 50 % de rappel : 45 %, contre
+# 81 % pour le Bleu et 82 % pour le Rouge. Son erreur se partage en deux moities
+# presque egales -- 30 % des Blanc annonces Rouge, 25 % annonces Bleu -- donc ce n'est
+# pas seulement une hesitation avec le Rouge.
+#
+# L'hypothese porte sur l'arbitrage entre les deux quotas. Il etait jusqu'ici illisible
+# pour le modele : `rouge_pressure` compte les jours eligibles jusqu'au 31 mars,
+# `blanc_pressure` comptait les jours de calendrier jusqu'au 31 aout. Au 13 mars 2026,
+# 13 jours d'un cote, 147 de l'autre -- un facteur dix entre deux grandeurs censees se
+# comparer. Le Blanc se mesure desormais sur la meme fenetre, et leur rapport dit quel
+# quota est le plus rare aujourd'hui.
+#
+# Le denominateur corrige s'applique aux DEUX candidats : c'est une correction, pas une
+# option. Ce qui est mesure ici est l'apport des deux features d'arbitrage.
 CANDIDATS = [
-    ("retenu (1 etage)", dict(RETENU, two_stage=False)),
-    ("deux etages", dict(RETENU, two_stage=True)),
+    ("sans arbitrage", dict(RETENU, excluded=ARBITRAGE, two_stage=False)),
+    ("arbitrage B/R", dict(RETENU, excluded=[], two_stage=False)),
 ]
 
 
@@ -78,11 +94,24 @@ def evalue(gbm, X, y, meta):
     preds = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
     rouge = y == config.ROUGE
     signale = preds == config.ROUGE
+    # Le Blanc est la seule couleur sous les 50 % de rappel : c'est lui qu'on cherche a
+    # relever ici, il doit donc figurer au tableau plutot que d'etre noye dans
+    # l'exactitude globale.
+    blanc = y == config.BLANC
+    dit_blanc = preds == config.BLANC
     return {
         "logloss": float(log_loss(y, probs, labels=model.CLASSES)),
         "acc": float((preds == y).mean()),
         "rappel_r": float((signale & rouge).sum() / rouge.sum()) if rouge.sum() else 0.0,
         "prec_r": float((signale & rouge).sum() / signale.sum()) if signale.sum() else 0.0,
+        "rappel_b": float((dit_blanc & blanc).sum() / blanc.sum()) if blanc.sum() else 0.0,
+        "prec_b": float((dit_blanc & blanc).sum() / dit_blanc.sum()) if dit_blanc.sum() else 0.0,
+        # Ou part le Blanc quand il est rate : vers le Bleu ou vers le Rouge ? Les deux
+        # erreurs n'ont pas le meme cout, et une piste peut corriger l'une en aggravant
+        # l'autre sans que le rappel le dise.
+        "blanc_vu_bleu": float((blanc & (preds == config.BLEU)).sum() / blanc.sum())
+                         if blanc.sum() else 0.0,
+        "blanc_vu_rouge": float((blanc & signale).sum() / blanc.sum()) if blanc.sum() else 0.0,
         # Ecart moyen entre la probabilite annoncee et la frequence observee, par
         # tranche de 10 points : c'est la mesure directe de « peut-on y croire ».
         "calibration": ecart_calibration(probs[:, 2], rouge),
@@ -152,6 +181,16 @@ def main():
               f"{np.mean([r['rappel_r'] for r in rs]):>8.0%} "
               f"{np.mean([r['prec_r'] for r in rs]):>7.0%} "
               f"{np.mean([r['calibration'] for r in rs]):>11.1%}")
+
+    print(f"\nLe Blanc, couleur la plus mal vue (45 % de rappel au depart) :\n")
+    print(f"{'candidat':>20} {'rappel B':>9} {'prec. B':>8} "
+          f"{'B vu Bleu':>10} {'B vu Rouge':>11}")
+    for nom, _ in CANDIDATS:
+        rs = [r for _, r in resultats[nom]]
+        print(f"{nom:>20} {np.mean([r['rappel_b'] for r in rs]):>8.0%} "
+              f"{np.mean([r['prec_b'] for r in rs]):>7.0%} "
+              f"{np.mean([r['blanc_vu_bleu'] for r in rs]):>9.0%} "
+              f"{np.mean([r['blanc_vu_rouge'] for r in rs]):>10.0%}")
 
     ref = max(r["logloss"] for _, r in resultats[CANDIDATS[0][0]])
     print(f"\nDetail par saison (log-loss ; plus bas vaut mieux) :")

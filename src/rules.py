@@ -57,6 +57,32 @@ def remaining_rouge_days(target):
     return n
 
 
+_JOURS_BLANC = {}
+
+
+def remaining_blanc_days(target, fin=None):
+    """Jours ou un Blanc est encore possible, de `target` (inclus) a `fin`.
+
+    Par defaut jusqu'a la fin de saison. `fin` sert a compter sur la fenetre
+    hivernale, la ou le Blanc est reellement en concurrence avec le Rouge : sur six
+    saisons, 37 des 43 Blanc tombent entre novembre et mars, les six autres debordant
+    en avril et en octobre ou aucun Rouge n'est possible.
+    """
+    if fin is None:
+        fin = calendrier.season_end(calendrier.season_of(target))
+    cle = (target, fin)
+    if cle in _JOURS_BLANC:
+        return _JOURS_BLANC[cle]
+    n = 0
+    d = target
+    while d <= fin:
+        if blanc_possible(d):
+            n += 1
+        d += timedelta(days=1)
+    _JOURS_BLANC[cle] = n
+    return n
+
+
 def rouge_slack(target, rouge_left):
     """Marge de placement : jours encore disponibles moins Rouge encore a placer.
 
