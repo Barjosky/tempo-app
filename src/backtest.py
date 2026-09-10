@@ -9,11 +9,25 @@ from sklearn.metrics import confusion_matrix, f1_score, log_loss
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config
-from src import db, features, model
+from src import db, features, model, rules
 from src.sources import calendrier
 
 # Saisons evaluees avec de vraies previsions meteo archivees (pas de meteo parfaite)
 HONEST_SEASONS = ["2022-2023", "2023-2024", "2024-2025", "2025-2026"]
+
+
+def evaluables(meta):
+    """Lignes retenues pour NOTER le modele : les jours ou un Rouge est possible.
+
+    Le reste de l'annee, la reponse est Bleu d'avance -- d'avril a octobre, les
+    week-ends, les jours feries. Les inclure gonflait le score de pres de vingt
+    points sans que le modele ait rien risque : 88,8 % sur l'annee entiere contre
+    69,3 % ici. On note donc sur les seuls jours ou il a un choix a faire.
+
+    L'ENTRAINEMENT, lui, continue de voir toute l'annee : ces jours-la portent l'etat
+    des quotas et la dynamique de la saison, dont le modele a besoin.
+    """
+    return np.array([rules.rouge_possible(m["target"], m["is_holiday"]) for m in meta])
 
 
 def _metrics(y, probs, preds):
@@ -60,19 +74,24 @@ def run(conn, seasons=HONEST_SEASONS, seed=0, verbose=True,
         preds = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
         bprobs = base.predict_proba(mte)
         bpreds = np.array(model.CLASSES)[bprobs.argmax(axis=1)]
+        ev = evaluables(mte)
 
         results["per_season"][season] = {
-            "model": _metrics(yte, probs, preds),
-            "baseline": _metrics(yte, bprobs, bpreds),
+            "model": _metrics(yte[ev], probs[ev], preds[ev]),
+            "baseline": _metrics(yte[ev], bprobs[ev], bpreds[ev]),
             "rouge_threshold": gbm.rouge_threshold,
             "blanc_threshold": gbm.blanc_threshold,
             "n_train": len(Xtr),
         }
         for i, m in enumerate(mte):
+            # Toutes les lignes sont conservees : `backfill.py` en alimente l'onglet
+            # Historique, qui propose ses propres periodes. Seule la NOTATION est
+            # restreinte, via ce drapeau.
             all_rows.append({
                 "season": season, "horizon": m["horizon"], "target": m["target"].isoformat(),
                 "y": int(yte[i]), "pred": int(preds[i]), "bpred": int(bpreds[i]),
                 "p": probs[i].tolist(), "bp": bprobs[i].tolist(),
+                "eval": bool(ev[i]),
             })
         if verbose:
             mm, bb = results["per_season"][season]["model"], results["per_season"][season]["baseline"]
@@ -80,16 +99,19 @@ def run(conn, seasons=HONEST_SEASONS, seed=0, verbose=True,
                   f"logloss {mm['logloss']:.3f} (base {bb['logloss']:.3f})  "
                   f"rappel rouge {mm['recall_rouge']:.2f} (base {bb['recall_rouge']:.2f})")
 
-    y = [r["y"] for r in all_rows]
-    P = np.array([r["p"] for r in all_rows])
-    B = np.array([r["bp"] for r in all_rows])
-    preds = np.array([r["pred"] for r in all_rows])
-    bpreds = np.array([r["bpred"] for r in all_rows])
+    notes = [r for r in all_rows if r["eval"]]
+    y = [r["y"] for r in notes]
+    P = np.array([r["p"] for r in notes])
+    B = np.array([r["bp"] for r in notes])
+    preds = np.array([r["pred"] for r in notes])
+    bpreds = np.array([r["bpred"] for r in notes])
     results["global"] = _metrics(y, P, preds)
     results["baseline"] = _metrics(y, B, bpreds)
+    results["scope"] = "jours ou le Rouge est possible (lun-ven, nov-mars, hors feries)"
+    results["n_total"] = len(all_rows)
 
     for h in range(1, config.MAX_HORIZON + 1):
-        idx = [i for i, r in enumerate(all_rows) if r["horizon"] == h]
+        idx = [i for i, r in enumerate(notes) if r["horizon"] == h]
         if not idx:
             continue
         results["by_horizon"][h] = {
@@ -187,9 +209,12 @@ li.ko{{border-color:#ef4444;background:rgba(239,68,68,.08)}}
 small{{color:#8fa0b5}}</style>
 <h1>Backtest walk-forward — Tempo EDF</h1>
 <p class=sub>Saisons evaluees : {', '.join(results['per_season'])} &middot;
-{results['global']['n']} predictions &middot; genere le {datetime.now():%d/%m/%Y %H:%M}<br>
+<b>{results['global']['n']} predictions notees</b> sur {results.get('n_total', 0)} produites
+&middot; genere le {datetime.now():%d/%m/%Y %H:%M}<br>
 Chaque saison est predite par un modele entraine uniquement sur les saisons anterieures,
-avec la meteo telle qu'elle etait prevue a l'echeance consideree.</p>
+avec la meteo telle qu'elle etait prevue a l'echeance consideree.<br>
+<b>Perimetre de notation : {results.get('scope', '')}.</b> Le reste de l'annee, la reponse
+est Bleu d'avance et gonflerait le score sans que le modele ait rien risque.</p>
 
 <h2>Criteres de viabilite</h2><ul>{checks}</ul>
 
@@ -214,8 +239,11 @@ avec la meteo telle qu'elle etait prevue a l'echeance consideree.</p>
 
 def main():
     conn = db.connect()
-    print("Backtest walk-forward (entrainement uniquement sur le passe) :")
+    print("Backtest walk-forward (entrainement uniquement sur le passe).")
+    print("Notation restreinte aux jours ou le Rouge est possible.\n")
     results = run(conn)
+    print(f"\n{results['global']['n']} predictions notees sur "
+          f"{results['n_total']} produites.")
     print("\nPar horizon :")
     print(f"{'H':>3} {'acc':>7} {'base':>7} {'logloss':>8} {'base':>8} {'rapR':>6} {'baseR':>6}")
     for h, r in sorted(results["by_horizon"].items()):

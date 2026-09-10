@@ -194,11 +194,19 @@ Les signaux en question :
   l'arbitrage qu'EDF fait — ce jour froid mérite-t-il un Rouge, ou en reste-t-il assez de
   plus froids pour dépenser le quota plus tard ?
 
-Pour savoir si la météo sert vraiment, et à quelle échéance :
+Pour savoir ce que chaque feature apporte réellement :
 
 ```bash
-python diagnostic_meteo.py   # permutation par groupe de features
+python diagnostic_features.py            # par groupe, puis une par une
+python diagnostic_features.py --groupes  # groupes seulement, rapide
 ```
+
+La méthode est la permutation : on détruit une colonne du jeu de test en la mélangeant,
+et on mesure ce que le modèle perd. Trois colonnes décident de la lecture — la perte
+moyenne, le **bruit** de permutation (en dessous, on ne mesure rien) et la **pire
+saison** (une feature qui sauve un hiver et en abîme un autre est instable, pas utile).
+Distinguer le bruit de permutation de l'écart entre saisons est ce qui rend le verdict
+lisible : confondus, tout paraît insignifiant.
 
 ## Honnêteté du backtest
 
@@ -213,6 +221,14 @@ sur l'erreur de prévision réellement mesurée, et sont exclues de l'évaluatio
 python -m src.backtest   # rejeu walk-forward + critères de viabilité
 python run_tests.py      # règles métier + pipeline
 ```
+
+**Le backtest ne note que les jours où le Rouge est possible.** L'entraînement, lui,
+continue de voir toute l'année : les jours sans enjeu portent l'état des quotas et la
+dynamique de la saison, dont le modèle a besoin. Seule la note est restreinte, parce
+qu'un score calculé sur des journées dont la réponse est connue d'avance ne mesure
+rien. Le même périmètre sert à l'onglet Historique, et un test verrouille le fait que
+les deux implémentations — le prédicat Python et le filtre SQL — désignent bien les
+mêmes jours.
 
 `run_tests.py` mêle deux familles. `tests/test_rules.py` confronte les règles Tempo aux
 **vraies** couleurs collectées : sans base constituée il se saute, plutôt que d'échouer
@@ -241,7 +257,7 @@ app.py         serveur web (onglets Prévisions / Historique)
 backfill.py    rejoue le backtest dans l'historique de la page
 analyse_seuils.py  balayage des seuils d'alerte Rouge et Blanc sur 5 saisons
 analyse_euros.py   ce que la prediction rapporte, et a quel prix en contrainte
-diagnostic_meteo.py  d'ou vient reellement l'information, par echeance
+diagnostic_features.py  ce que chaque feature apporte, par permutation
 src/rules.py   contraintes contractuelles Tempo
 src/features.py construction des features, strictement point-in-time
 src/model.py   baseline climatologique + GBM calibré

@@ -138,6 +138,36 @@ def test_les_periodes_sont_embiquees():
     assert web.period_clause("nimporte quoi") == ""
 
 
+def test_le_perimetre_de_notation_est_le_meme_partout():
+    """Le backtest et l'API doivent designer exactement les memes jours.
+
+    Le perimetre existe en deux exemplaires : `backtest.evaluables()` en Python, pour
+    noter le modele, et `app.period_clause('eligibles')` en SQL, pour la page. S'ils
+    divergeaient, le pourcentage affiche ne serait plus celui qui a ete mesure -- et
+    rien ne le signalerait.
+    """
+    import app as web
+    from src import backtest, rules
+    conn = _STORE.get("conn") or store() and _STORE["conn"]
+
+    par_sql = {r["date"] for r in conn.execute(
+        f"""SELECT p.target_date AS date FROM days d
+            JOIN (SELECT date AS target_date FROM days) p ON p.target_date = d.date
+            WHERE d.color IS NOT NULL {web.period_clause('eligibles')}""")}
+    par_python = {d.isoformat() for d, info in _STORE["store"].days.items()
+                  if info["color"] is not None
+                  and rules.rouge_possible(d, info["is_holiday"])}
+    assert par_sql == par_python, (
+        f"{len(par_sql ^ par_python)} jours differents entre le filtre SQL et le "
+        f"predicat Python, par exemple {sorted(par_sql ^ par_python)[:3]}")
+
+    # Et `evaluables()` doit s'appuyer sur le meme predicat.
+    metas = [{"target": d, "is_holiday": info["is_holiday"]}
+             for d, info in sorted(_STORE["store"].days.items())]
+    ev = backtest.evaluables(metas)
+    assert {m["target"].isoformat() for m, k in zip(metas, ev) if k} >= par_python
+
+
 def test_la_fiabilite_compte_ce_qu_elle_annonce():
     """Les tranches doivent refleter les probabilites, pas l'ordre des lignes."""
     import app as web

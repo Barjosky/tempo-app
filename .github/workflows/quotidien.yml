@@ -17,6 +17,10 @@ on:
         description: "Rejouer le backtest dans l'historique de la page (long)"
         type: boolean
         default: false
+      diagnostic:
+        description: "Mesurer l'apport de chaque feature (tres long)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -85,6 +89,11 @@ jobs:
       - name: Rejouer le backtest dans l'historique
         if: inputs.rejouer == true
         run: python backfill.py
+
+      # Purement informatif : le resultat se lit dans les logs, rien n'est publie.
+      - name: Mesurer l'apport de chaque feature
+        if: inputs.diagnostic == true
+        run: python diagnostic_features.py --reps 5
 
       - name: Figer les donnees du site
         run: python export_static.py
