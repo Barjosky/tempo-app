@@ -179,17 +179,25 @@ def accuracy():
             WHERE d.color IS NOT NULL AND p.is_official = 0 {cond}""", params).fetchall()
     by_h, confusion = {}, [[0] * 3 for _ in range(3)]
     for r in rows:
-        h = by_h.setdefault(r["horizon"], {"n": 0, "ok": 0, "rouge_total": 0, "rouge_found": 0})
+        h = by_h.setdefault(r["horizon"], {"n": 0, "ok": 0, "rouge_total": 0,
+                                           "rouge_found": 0, "rouge_flagged": 0})
         h["n"] += 1
         h["ok"] += r["predicted_color"] == r["actual"]
+        h["rouge_flagged"] += r["predicted_color"] == 3
         if r["actual"] == 3:
             h["rouge_total"] += 1
             h["rouge_found"] += r["predicted_color"] == 3
         confusion[r["actual"] - 1][r["predicted_color"] - 1] += 1
+    # Le rappel seul ne dit que la moitie de l'histoire : il mesure le risque de
+    # rater un Rouge, jamais celui de s'organiser pour rien. Les deux se lisent
+    # ensemble ou pas du tout -- on peut toujours rappeler 100 % en annonçant Rouge
+    # tous les jours.
     out = [{
         "horizon": h, "n": v["n"], "accuracy": v["ok"] / v["n"] if v["n"] else None,
         "rouge_recall": v["rouge_found"] / v["rouge_total"] if v["rouge_total"] else None,
-        "rouge_total": v["rouge_total"],
+        "rouge_precision": (v["rouge_found"] / v["rouge_flagged"]
+                            if v["rouge_flagged"] else None),
+        "rouge_total": v["rouge_total"], "rouge_flagged": v["rouge_flagged"],
     } for h, v in sorted(by_h.items())]
     return jsonify({"by_horizon": out, "confusion": confusion, "n": len(rows),
                     "period": period, "reliability": reliability(rows)})

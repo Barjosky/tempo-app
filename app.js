@@ -226,6 +226,7 @@ async function loadHistory() {
   const ok = acc.by_horizon.reduce((s, h) => s + h.accuracy * h.n, 0);
   const rouges = acc.by_horizon.reduce((s, h) => s + h.rouge_total, 0);
   const rougesFound = acc.by_horizon.reduce((s, h) => s + (h.rouge_recall || 0) * h.rouge_total, 0);
+  const alertes = acc.by_horizon.reduce((s, h) => s + (h.rouge_flagged || 0), 0);
   document.getElementById("stats").innerHTML = `
     <div class="stat"><span class="label">prédictions évaluées</span><b>${total}</b>
       <small>hors annonces officielles</small></div>
@@ -233,13 +234,18 @@ async function loadHistory() {
       <b>${total ? pct(ok / total) : "—"}</b><small>toutes couleurs confondues</small></div>
     <div class="stat"><span class="label">rouges anticipés</span>
       <b>${rouges ? pct(rougesFound / rouges) : "—"}</b>
-      <small>${Math.round(rougesFound)} / ${rouges} jours rouges</small></div>`;
+      <small>${Math.round(rougesFound)} / ${rouges} jours rouges</small></div>
+    <div class="stat" data-warn="${alertes && rougesFound / alertes < 0.5 ? "1" : ""}">
+      <span class="label">alertes justifiées</span>
+      <b>${alertes ? pct(rougesFound / alertes) : "—"}</b>
+      <small>${Math.round(rougesFound)} / ${alertes} jours annoncés Rouge</small></div>`;
 
   document.getElementById("horizon-bars").innerHTML = acc.by_horizon.length
     ? acc.by_horizon.map((h) => `
       <div class="hbar"><span>J+${h.horizon}</span>
         <span class="t"><i style="width:${(h.accuracy || 0) * 100}%"></i></span>
-        <span class="v">${pct(h.accuracy)} · R ${pct(h.rouge_recall)}</span></div>`).join("")
+        <span class="v">${pct(h.accuracy)} · R ${pct(h.rouge_recall)}
+          <em>/ ${pct(h.rouge_precision)}</em></span></div>`).join("")
     : '<p class="empty">Pas encore de données.</p>';
 
   const labels = ["Bleu", "Blanc", "Rouge"];
