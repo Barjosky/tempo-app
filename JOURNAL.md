@@ -34,11 +34,25 @@ SQL (`app.period_clause`) — et un test verrouille leur concordance.
 |---|---|---|---|---|
 | Toute l'année | 365 | 300 (82 %) | 43 (12 %) | 22 (6 %) |
 | Novembre → mars | 151 | 92 (61 %) | 37 (24 %) | 22 (15 %) |
-| Jours éligibles | 105 | 52 (50 %) | 30 (29 %) | 22 (21 %) |
+| Jours éligibles | 106 | 52 (49 %) | 32 (30 %) | 22 (21 %) |
 
 Sur un jour ouvré d'hiver, c'est **pile ou face** : une journée sur deux est déjà chère.
 Sur les 43 Blanc d'une saison, 37 tombent nov-mars ; les six autres débordent la
 fenêtre (avril, octobre), où aucun Rouge n'est possible.
+
+**Les deux couleurs ne culminent pas le même mois** (moyenne sur six saisons) :
+
+| Mois | Bleu | Blanc | Rouge |
+|---|---|---|---|
+| novembre | 84 % | 14 % | 1 % |
+| décembre | 53 % | 32 % | 15 % |
+| **janvier** | 39 % | 25 % | **36 %** |
+| **février** | 55 % | **37 %** | 8 % |
+| mars | 72 % | 17 % | 11 % |
+
+Janvier est le mois du Rouge — 11,2 des 22 y tombent, la moitié du quota. Février est
+celui du Blanc, avec le Rouge déjà presque épuisé. Un modèle qui ignore la date se prive
+de ce décalage d'un mois entre les deux pics.
 
 Conséquence : le modèle apprend sur une population à 82 % de Bleu et sert sur une
 population à 50 %. Ce décalage est la racine de plusieurs problèmes ci-dessous.
@@ -97,6 +111,7 @@ apparaît et 2023-2024 passe de 1,053 à 0,809.
 | Retirer les features d'offre (nucléaire) | moyenne 0,770 → 0,749, **pire saison 1,085 → 1,124** | écarté : améliore la moyenne, dégrade le plancher |
 | Pondérer l'entraînement vers l'hiver | 2024-2025 : 0,638 → **0,720** | écarté |
 | Ensemble sans diversification | strictement identique | écarté (voir ci-dessus) |
+| Modèle à deux étages (tendu ? puis Blanc ou Rouge ?) | moyenne 0,670 → 0,709, **pire saison 0,902 → 1,104** | écarté |
 
 **Leçon de méthode.** J'ai d'abord conclu du contraire pour le nucléaire, à partir
 d'une mesure de permutation. Permuter une colonne sur un modèle **déjà entraîné** ne
@@ -154,13 +169,30 @@ tombe 33 %) ; **entre 40 et 70 % il est trop sûr de lui** (annonce 55 %, tombe 
 
 ---
 
-## En cours
+## Le modèle à deux étages : mesuré, écarté
 
-**Modèle à deux étages** (`config.TWO_STAGE`, désactivé par défaut). Vise la dernière
-faiblesse : 220 jours Blanc annoncés Rouge. Premier étage « journée tendue ? », second
-« Blanc ou Rouge ? » entraîné sur les seuls jours tendus, où il voit 30 Blanc contre
-22 Rouge — un arbitrage équilibré au lieu d'être noyé. Comparatif lancé, verdict non
-connu à la rédaction.
+L'idée visait la dernière faiblesse connue : 220 jours Blanc annoncés Rouge. Premier
+étage « journée tendue ? », second « Blanc ou Rouge ? » entraîné sur les seuls jours
+tendus, où l'arbitrage est équilibré (32 Blanc contre 22 Rouge) au lieu d'être noyé
+sous le Bleu.
+
+| Saison | 1 étage | 2 étages | |
+|---|---|---|---|
+| 2022-2023 | **0,343** | 0,356 | |
+| 2023-2024 | 0,807 | **0,771** | |
+| 2024-2025 | 0,626 | **0,604** | |
+| 2025-2026 | **0,902** | 1,104 | ← la saison sous contrainte de quota |
+| **Pire saison** | **0,902** | 1,104 | |
+
+Il gagne sur trois saisons et perd lourdement sur la quatrième — précisément celle où
+treize jours de mars sont Rouge par arithmétique. Découper la décision en deux coupe
+aussi la contrainte de quota en deux : le premier étage sait qu'une journée est tendue,
+le second arbitre sans voir que le calendrier a déjà tranché.
+
+Il rapporte tout de même **+3 points de précision d'alerte** (65 % → 68 %) contre
+−5 points de rappel (82 % → 77 %). Un utilisateur qui préfère moins d'alertes mais plus
+sûres y gagnerait ; celui qui veut ne pas rater un Rouge y perd. Le plancher décidant
+ici, `config.TWO_STAGE` reste à `False`.
 
 ## Pistes non explorées
 

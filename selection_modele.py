@@ -11,20 +11,23 @@ pour quelqu'un qui doit decider demain matin.
 C'est donc la PIRE SAISON qui departage ici, pas la moyenne. Un candidat ne gagne
 que s'il releve le plancher.
 
-Ce qui est compare ici vise la derniere faiblesse connue : l'hesitation entre Blanc
-et Rouge. Le modele repere tres bien les journees tendues et n'arrive pas a trancher
-dedans -- 220 jours Blanc annonces Rouge, et 71 % des fausses alertes tombant sur du
-Blanc plutot que sur du Bleu.
+Ce qui a ete compare ici visait la derniere faiblesse connue : l'hesitation entre
+Blanc et Rouge. Le modele repere tres bien les journees tendues et n'arrive pas a
+trancher dedans -- 220 jours Blanc annonces Rouge, et 71 % des fausses alertes tombant
+sur du Blanc plutot que sur du Bleu.
 
-L'hypothese est que le probleme est mal pose. Une seule question a trois reponses,
-ou le Bleu fait 82 % des exemples : le modele apprend surtout a reconnaitre les
-journees sans enjeu, et l'arbitrage Blanc/Rouge, qui ne concerne qu'un jour sur sept,
-ne pese presque rien dans sa fonction de cout.
+L'hypothese etait que le probleme est mal pose : le modele s'entraine sur une
+population a 82 % de Bleu et sert sur des jours eligibles ou le Bleu n'est plus qu'a la
+moitie. Le candidat coupait la decision en deux -- « journee tendue ? », puis « Blanc
+ou Rouge ? » entrainee sur les seuls jours tendus, ou l'arbitrage est equilibre
+(32 Blanc contre 22 Rouge).
 
-Le candidat le coupe en deux decisions -- « journee tendue ? », puis « Blanc ou
-Rouge ? » entrainee sur les seuls jours tendus. Ce second etage voit alors 43 Blanc
-contre 22 Rouge, un probleme equilibre, et peut consacrer toute sa capacite a la
-frontiere qui echoue.
+MESURE, ECARTE. Il gagne sur trois saisons et perd lourdement sur la quatrieme :
+pire saison 0,902 -> 1,104, sur l'hiver justement soumis a la contrainte de quota.
+Couper la decision en deux coupe aussi la contrainte en deux -- le second etage arbitre
+sans voir que le calendrier a deja tranche. Il rapporte +3 points de precision d'alerte
+pour -5 de rappel ; le plancher decidant ici, TWO_STAGE reste a False. Le candidat est
+laisse dans la liste pour que la mesure se refasse si la contrainte change.
 
 Avertissement d'honnetete : quatre saisons evaluables, c'est peu. Comparer beaucoup
 de variantes finirait par choisir celle qui colle le mieux a ces quatre-la. D'ou une

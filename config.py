@@ -107,8 +107,13 @@ WINTER_WEIGHT = 1.0
 N_SEEDS = 5
 
 # Couper la decision en deux etages : « journee tendue ? » puis « Blanc ou Rouge ? ».
-# A False tant que la mesure n'a pas tranche. Vise la seule faiblesse qui reste :
-# 220 jours Blanc annonces Rouge, et 71 % des fausses alertes tombant sur du Blanc.
+# Visait la seule faiblesse qui reste : 220 jours Blanc annonces Rouge, et 71 % des
+# fausses alertes tombant sur du Blanc. MESURE ET ECARTE : gagne sur trois saisons,
+# perd lourdement sur la quatrieme (pire saison 0,902 -> 1,104), celle ou la fin
+# d'hiver est arithmetique. Couper la decision en deux coupe aussi la contrainte de
+# quota en deux : le second etage arbitre sans voir que le calendrier a deja tranche.
+# Reste implemente parce qu'il echange 5 points de rappel Rouge contre 3 de precision
+# d'alerte -- un compromis defendable si un jour on prefere alerter moins mais mieux.
 TWO_STAGE = False
 
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
