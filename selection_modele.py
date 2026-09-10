@@ -11,14 +11,19 @@ pour quelqu'un qui doit decider demain matin.
 C'est donc la PIRE SAISON qui departage ici, pas la moyenne. Un candidat ne gagne
 que s'il releve le plancher.
 
-Trois leviers sont compares, chacun repondant a une mesure :
+Ce qui est compare ici vise la fin de saison sous contrainte de quota, cause
+identifiee du pire hiver : en 2025-2026, treize des vingt-deux Rouge sont tombes en
+mars, jusqu'au 31. Deux facons de la traiter, seules puis ensemble :
 
-  - retirer les features d'offre, que la permutation designe comme nuisibles dans
-    toutes les saisons ;
-  - ponderer l'entrainement vers l'hiver, parce que quatre lignes sur cinq sont des
-    journees sans enjeu qui dominent la fonction de cout ;
-  - moyenner plusieurs graines, parce que le hasard d'entrainement est precisement
-    ce qui fait qu'un hiver passe et que le suivant casse.
+  - donner au modele la marge de placement en JOURS plutot qu'en ratio, parce qu'un
+    arbre ne sait pas extrapoler un ratio au-dela des valeurs vues ;
+  - imposer le Rouge quand la marge est nulle, parce que c'est alors une
+    arithmetique et non une prevision.
+
+Trois pistes ont deja ete mesurees SANS succes et ne sont pas reproposees : retirer
+les features d'offre (ameliore la moyenne, degrade le plancher), ponderer vers
+l'hiver (degrade 2024-2025), moyenner plusieurs graines (sans effet tant que rien ne
+diversifie les modeles).
 
 Avertissement d'honnetete : quatre saisons evaluables, c'est peu. Comparer beaucoup
 de variantes finirait par choisir celle qui colle le mieux a ces quatre-la. D'ou une
@@ -36,14 +41,20 @@ import config
 from src import backtest, db, features, model
 from src.sources import calendrier
 
+MARGE = ["rouge_slack", "rouge_forced"]
 NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 
+# Chaque candidat isole UNE idee, pour que le tableau se lise sans ambiguite.
+# La cible est la fin de saison sous contrainte de quota : c'est elle qui plombe
+# 2025-2026, ou treize des vingt-deux Rouge sont tombes en mars, jusqu'au 31.
 CANDIDATS = [
-    ("actuel (reference)", dict(excluded=[], winter_weight=1.0, n_seeds=1)),
-    ("sans nucleaire", dict(excluded=NUCLEAIRE, winter_weight=1.0, n_seeds=1)),
-    ("+ poids hiver", dict(excluded=NUCLEAIRE, winter_weight=5.0, n_seeds=1)),
-    ("ensemble seul", dict(excluded=[], winter_weight=1.0, n_seeds=5)),
-    ("les trois", dict(excluded=NUCLEAIRE, winter_weight=5.0, n_seeds=5)),
+    ("reference", dict(excluded=MARGE, force_quota=False)),
+    ("marge en jours", dict(excluded=[], force_quota=False)),
+    ("contrainte quota", dict(excluded=MARGE, force_quota=True)),
+    ("les deux", dict(excluded=[], force_quota=True)),
+    # Garde une trace des pistes deja mesurees sans succes, pour ne pas les
+    # reproposer plus tard en croyant les avoir oubliees.
+    ("les deux + ensemble", dict(excluded=[], force_quota=True, n_seeds=5)),
 ]
 
 

@@ -23,7 +23,7 @@ def _mask_matrix(meta):
     ], dtype=float)
 
 
-def constrain(probs, meta):
+def constrain(probs, meta, force_quota=None):
     """Annule les couleurs impossibles, renormalise, puis impose les Rouge forces.
 
     Le masque enleve ce que le contrat interdit. La contrainte de quota fait
@@ -38,6 +38,10 @@ def constrain(probs, meta):
     fallback[:, 0] = 1.0
     out = np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
 
+    if force_quota is None:
+        force_quota = config.FORCE_QUOTA_ROUGE
+    if not force_quota:
+        return out
     forces = np.array([rules.rouge_force(m["target"], m.get("rouge_left"))
                        for m in meta])
     if forces.any():
@@ -91,12 +95,14 @@ class TempoModel:
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
     def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
                  blanc_threshold=None, excluded=None, winter_weight=None,
-                 n_seeds=None):
+                 n_seeds=None, force_quota=None):
         self.seed = seed
         self.excluded = config.EXCLUDED_FEATURES if excluded is None else excluded
         self.winter_weight = (config.WINTER_WEIGHT if winter_weight is None
                               else winter_weight)
         self.n_seeds = config.N_SEEDS if n_seeds is None else n_seeds
+        self.force_quota = (config.FORCE_QUOTA_ROUGE if force_quota is None
+                            else force_quota)
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
@@ -110,6 +116,11 @@ class TempoModel:
             max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
             min_samples_leaf=40, l2_regularization=1.0,
             class_weight=self.class_weight,
+            # Sans tirage sur les colonnes, changer de graine ne change rien : avec
+            # early_stopping desactive et un jeu plus petit que le seuil de
+            # sous-echantillonnage du binning, l'algorithme est deterministe. Le
+            # tirage n'est donc introduit que quand on moyenne plusieurs modeles.
+            max_features=1.0 if self.n_seeds <= 1 else 0.85,
             early_stopping=False, random_state=seed,
         )
 
@@ -184,7 +195,7 @@ class TempoModel:
             for i, cls in enumerate(clf.classes_):
                 ordered[:, CLASSES.index(int(cls))] += raw[:, i]
         ordered /= len(self.clf)
-        return constrain(ordered, meta)
+        return constrain(ordered, meta, self.force_quota)
 
 
 def decide(probs, rouge_threshold, blanc_threshold=None):

@@ -76,31 +76,37 @@ WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 # ou le Rouge est possible. Un modele qu'on ne peut pas croire une annee sur trois
 # n'est pas fiable, quelle que soit sa moyenne.
 
-# Features neutralisees. La permutation les a mesurees nuisibles : le groupe
-# « offre (nucleaire) » est le pire des dix, negatif dans TOUTES les saisons
-# (-0,032 de log-loss en moyenne, -0,091 sur la pire). L'intuition etait bonne --
-# un jour Rouge naît d'une marge tendue -- mais la production nucleaire appelee est
-# un proxy trop grossier de la puissance disponible.
-# Elles sont neutralisees plutot que supprimees : la ligne de features garde sa
-# longueur, donc aucun risque de decalage entre les colonnes et leurs noms, et
-# revenir en arriere ne demande que de vider cette liste.
-EXCLUDED_FEATURES = [
-    "nuclear_recent_mw",
-    "nuclear_anomaly_mw",
-    "margin_proxy_mw",
-]
+# Features neutralisees. Vide : la mesure a dementi l'intuition.
+#
+# La permutation designait le groupe « offre (nucleaire) » comme nuisible dans
+# toutes les saisons, et j'en avais conclu qu'il fallait le retirer. Le
+# reentrainement SANS ces colonnes dit autre chose : la log-loss moyenne s'ameliore
+# (0,770 -> 0,749) mais la PIRE saison se degrade (1,085 -> 1,124). Or c'est le
+# plancher qui decide ici, pas la moyenne.
+#
+# La lecon vaut d'etre notee : permuter une colonne sur un modele deja entraine ne
+# dit pas ce que vaut un modele entraine sans elle. Dans le premier cas les autres
+# colonnes gardent les compensations apprises grace a celle qu'on detruit ; dans le
+# second, le modele se reorganise. Les deux mesures repondent a deux questions.
+EXCLUDED_FEATURES = []
 
-# Poids des jours ou le Rouge est possible pendant l'entrainement. Sans lui, la
-# fonction de cout est dominee par les journees d'ete, ou la reponse est Bleu
-# d'avance : le modele optimise surtout ce qui ne se joue pas. Le poids concentre
-# l'apprentissage ET la calibration sur le regime hivernal, ce qui repond aussi a
-# la sur-confiance mesuree entre 40 et 70 % de probabilite annoncee.
-WINTER_WEIGHT = 5.0
+# Poids des jours ou le Rouge est possible pendant l'entrainement. A 1.0 : desactive.
+# L'idee -- concentrer l'apprentissage sur le regime hivernal plutot que sur des
+# journees d'ete ou la reponse est connue d'avance -- reste defendable, mais mesuree
+# elle degrade nettement 2024-2025 (0,638 -> 0,720) sans relever le plancher.
+WINTER_WEIGHT = 1.0
 
-# Nombre de modeles moyennes. Chacun ne differe que par sa graine ; leur moyenne
-# reduit la part du hasard d'entrainement, qui est justement ce qui fait qu'une
-# saison passe et l'autre casse. C'est le levier le plus sur contre l'instabilite.
-N_SEEDS = 5
+# Nombre de modeles moyennes. A 1 : desactive.
+# Premiere tentative a 5, sans aucun effet -- et pour une raison instructive : avec
+# early_stopping desactive et moins de lignes que le seuil de sous-echantillonnage du
+# binning, HistGradientBoosting est DETERMINISTE. Les cinq graines produisaient cinq
+# modeles identiques, pour cinq fois le temps de calcul et cinq fois la taille en
+# cache. Au-dessus de 1, `max_features` introduit la diversite qui manquait.
+N_SEEDS = 1
+
+# Imposer le Rouge quand le quota ne tient plus dans les jours restants.
+# C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.
+FORCE_QUOTA_ROUGE = True
 
 # Periodes d'evaluation. Un taux de reussite calcule sur l'annee entiere est flatte
 # par les mois ou la reponse est connue d'avance : d'avril a octobre tout est Bleu.
