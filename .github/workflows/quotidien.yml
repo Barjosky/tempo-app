@@ -135,5 +135,15 @@ jobs:
             echo "Aucun changement a publier"
           else
             git commit -m "Previsions du $(date -u +%Y-%m-%d)"
-            git push
+            # Le job dure jusqu'a une heure ; la branche peut avoir avance entre le
+            # checkout et ici. Un push direct est alors rejete et TOUT le travail est
+            # perdu -- c'est arrive deux fois. Le commit ne touchant que des fichiers
+            # generes, le rebaser sur l'etat courant est sans risque.
+            for essai in 1 2 3; do
+              git push && exit 0
+              echo "Push rejete (essai $essai) : la branche a avance, on rebase."
+              git pull --rebase origin "${GITHUB_REF_NAME}" || exit 1
+            done
+            echo "::error::Publication impossible apres trois tentatives"
+            exit 1
           fi
