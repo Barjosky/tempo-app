@@ -76,7 +76,16 @@ WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 # ou le Rouge est possible. Un modele qu'on ne peut pas croire une annee sur trois
 # n'est pas fiable, quelle que soit sa moyenne.
 
-# Features neutralisees. Vide : la mesure a dementi l'intuition.
+# Features neutralisees, chacune apres une mesure qui a dementi l'intuition.
+#
+# L'arbitrage Blanc/Rouge (`blanc_pressure_hiver`, `quota_arbitrage`). Il visait la
+# seule couleur sous les 50 % de rappel, et il fait bien ce pour quoi il est concu :
+# rappel du Blanc 44 % -> 46 %, et les deux directions d'erreur reculent ensemble
+# (Blanc vu Bleu 25 -> 24 %, Blanc vu Rouge 31 -> 30 %). Mais deux points de Blanc se
+# paient tres cher ailleurs : 2023-2024 passe de 0,846 a 0,942 de log-loss, donc le
+# plancher se degrade de 0,911 a 0,942, et le rappel Rouge perd deux points (82 ->
+# 80 %). Le meme profil que le modele a deux etages : un gain reel sur la cible visee,
+# annule par une saison qui casse.
 #
 # La permutation designait le groupe « offre (nucleaire) » comme nuisible dans
 # toutes les saisons, et j'en avais conclu qu'il fallait le retirer. Le
@@ -88,7 +97,7 @@ WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 # dit pas ce que vaut un modele entraine sans elle. Dans le premier cas les autres
 # colonnes gardent les compensations apprises grace a celle qu'on detruit ; dans le
 # second, le modele se reorganise. Les deux mesures repondent a deux questions.
-EXCLUDED_FEATURES = []
+EXCLUDED_FEATURES = ["blanc_pressure_hiver", "quota_arbitrage"]
 
 # Poids des jours ou le Rouge est possible pendant l'entrainement. A 1.0 : desactive.
 # L'idee -- concentrer l'apprentissage sur le regime hivernal plutot que sur des

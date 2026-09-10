@@ -82,6 +82,10 @@ ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 #
 # Le denominateur corrige s'applique aux DEUX candidats : c'est une correction, pas une
 # option. Ce qui est mesure ici est l'apport des deux features d'arbitrage.
+# MESURE, ECARTE. L'arbitrage fait ce pour quoi il est concu -- rappel du Blanc
+# 44 -> 46 %, et les deux directions d'erreur reculent ensemble -- mais 2023-2024
+# passe de 0,846 a 0,942, donc le plancher se degrade de 0,911 a 0,942, et le rappel
+# Rouge perd deux points. Les features restent, neutralisees par config.
 CANDIDATS = [
     ("sans arbitrage", dict(RETENU, excluded=ARBITRAGE, two_stage=False)),
     ("arbitrage B/R", dict(RETENU, excluded=[], two_stage=False)),

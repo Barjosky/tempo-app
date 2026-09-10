@@ -112,6 +112,7 @@ apparaît et 2023-2024 passe de 1,053 à 0,809.
 | Pondérer l'entraînement vers l'hiver | 2024-2025 : 0,638 → **0,720** | écarté |
 | Ensemble sans diversification | strictement identique | écarté (voir ci-dessus) |
 | Modèle à deux étages (tendu ? puis Blanc ou Rouge ?) | moyenne 0,670 → 0,709, **pire saison 0,902 → 1,104** | écarté |
+| Arbitrage Blanc/Rouge (`quota_arbitrage`) | rappel Blanc 44 → 46 %, **pire saison 0,911 → 0,942** | écarté |
 
 **Leçon de méthode.** J'ai d'abord conclu du contraire pour le nucléaire, à partir
 d'une mesure de permutation. Permuter une colonne sur un modèle **déjà entraîné** ne
@@ -194,12 +195,54 @@ Il rapporte tout de même **+3 points de précision d'alerte** (65 % → 68 %) c
 sûres y gagnerait ; celui qui veut ne pas rater un Rouge y perd. Le plancher décidant
 ici, `config.TWO_STAGE` reste à `False`.
 
-## Pistes non explorées
+## Le Blanc : la faiblesse qui reste
 
-- **`blanc_pressure` est calculé sur un mauvais dénominateur** : les jours restants de
-  la saison entière (jusqu'au 31 août), alors que `rouge_pressure` utilise la fenêtre
-  hivernale. Les deux ne sont pas comparables, et leur *rapport* — quel quota est le
-  plus rare en ce moment — est justement l'arbitrage Blanc/Rouge. Défaut probable.
+C'est la seule couleur sous les 50 %, et de loin :
+
+| Réel | Bleu | Blanc | Rouge | rappel |
+|---|---|---|---|---|
+| Bleu | 1699 | 242 | 149 | 81 % |
+| **Blanc** | **304** | **552** | **364** | **45 %** |
+| Rouge | 52 | 105 | 723 | 82 % |
+
+**L'erreur se partage en deux moitiés presque égales** : 30 % des Blanc sont annoncés
+Rouge, mais 25 % sont annoncés **Bleu**. Ce n'est donc pas seulement une hésitation
+avec le Rouge — c'était une lecture trop rapide, faite en ne regardant que les fausses
+alertes. Une piste qui ne viserait que la frontière Blanc/Rouge peut corriger une
+moitié en aggravant l'autre, d'où l'affichage des deux directions dans le comparatif.
+
+### L'arbitrage entre les deux quotas : mesuré, écarté
+
+`rouge_pressure` compte le quota restant sur les jours **éligibles** jusqu'au 31 mars ;
+`blanc_pressure` le comptait sur les jours de **calendrier** jusqu'au 31 août. Au
+13 mars 2026 : 13 jours d'un côté, 147 de l'autre. Leur rapport — quel quota est le
+plus rare aujourd'hui — ne voulait donc rien dire.
+
+Mesuré sur une fenêtre commune, il fait exactement ce pour quoi il est conçu, et ça ne
+suffit pas :
+
+| | rappel B | B vu Bleu | B vu Rouge | pire saison |
+|---|---|---|---|---|
+| sans arbitrage | 44 % | 25 % | 31 % | **0,911** |
+| avec arbitrage | **46 %** | 24 % | 30 % | 0,942 |
+
+Les deux directions d'erreur reculent ensemble — le signal est donc réel — mais
+2023-2024 passe de 0,846 à 0,942, et le rappel Rouge perd deux points. Deux points de
+Blanc contre le plancher : refusé. Même profil que le modèle à deux étages.
+
+### La correction du dénominateur, elle, est conservée
+
+Aucun Blanc ne peut tomber un dimanche ; les compter était faux. Mais il faut savoir ce
+que cette correction vaut : **corrélation de rang 0,999992** entre l'ancienne et la
+nouvelle définition, et l'ordre de deux jours ne s'inverse que dans **0,19 %** des cas.
+Un arbre ne voit que l'ordre — la correction est donc juste et pratiquement sans effet.
+
+Ce chiffre sert surtout à ne pas se tromper de cause : le plancher a bougé de 0,902 à
+0,911 entre deux mesures, et ce n'est **pas** ce changement qui l'explique. Les deux
+runs ne tournaient pas sur la même base (la consommation avait été recollectée entre
+les deux). Deux mesures prises sur des données différentes ne se comparent pas.
+
+## Pistes non explorées
 - **La prévision RTE J+1 n'a jamais été mesurée équitablement** : elle n'existe qu'à
   une échéance sur dix, donc permuter sa colonne ne touche que 10 % des lignes. Il
   faudrait la mesurer à J+1 seulement.
