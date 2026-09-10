@@ -47,6 +47,10 @@ FEATURE_NAMES = [
     # Arbitrage budgetaire : combien de jours restants seront plus tendus que celui-ci,
     # face au quota Rouge encore disponible. C'est la question qu'EDF se pose.
     "colder_days_ahead", "rouge_budget_ratio",
+    # Marge de placement du quota, en JOURS. `rouge_pressure` disait deja la meme
+    # chose en ratio, mais un arbre ne sait pas extrapoler un ratio au-dela de ce
+    # qu'il a vu : une marge est un petit entier, il la decoupe sans peine.
+    "rouge_slack", "rouge_forced",
 ]
 
 
@@ -534,30 +538,7 @@ class FeatureStore:
         if len(vals) < 30:
             return float("nan")
         share = 1.0 - np.searchsorted(vals, residual) / len(vals)
-        return float(_remaining_rouge_days(target + timedelta(days=1)) * share)
-
-
-_ROUGE_DAYS_CACHE = {}
-
-
-def _remaining_rouge_days(target):
-    """Jours ouvres restants dans la fenetre Rouge apres `target` (pression du quota)."""
-    if target in _ROUGE_DAYS_CACHE:
-        return _ROUGE_DAYS_CACHE[target]
-    season = calendrier.season_of(target)
-    end_year = int(season.split("-")[1])
-    end = date(end_year, 3, 31)
-    if target > end:
-        _ROUGE_DAYS_CACHE[target] = 0
-        return 0
-    n = 0
-    d = target
-    while d <= end:
-        if rules.rouge_possible(d):
-            n += 1
-        d += timedelta(days=1)
-    _ROUGE_DAYS_CACHE[target] = n
-    return n
+        return float(rules.remaining_rouge_days(target + timedelta(days=1)) * share)
 
 
 def build_row(store, run_date, target, state=None, rng=None, use_renewables=True):
@@ -670,7 +651,9 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
             residual_pct_season = residual_vs_season_max = float("nan")
 
     season_start = calendrier.season_start(state["season"])
-    rouge_days_left = _remaining_rouge_days(target)
+    rouge_days_left = rules.remaining_rouge_days(target)
+    rouge_slack = rules.rouge_slack(target, state["rouge_left"])
+    rouge_forced = int(rules.rouge_force(target, state["rouge_left"]))
     days_left_season = (calendrier.season_end(state["season"]) - target).days + 1
 
     # Cote offre : ce que le parc nucleaire a recemment su fournir, et l'ecart au
@@ -734,6 +717,7 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         nuclear_recent, nuclear_anomaly, margin_proxy,
         rte_forecast, rte_gap,
         colder_ahead, budget_ratio,
+        rouge_slack if rouge_slack is not None else float("nan"), rouge_forced,
     ]
     return np.array(row, dtype=float)
 

@@ -165,6 +165,44 @@ def test_un_modele_d_un_autre_format_est_refuse():
         predict.MODEL_PATH = ancien
 
 
+def test_le_quota_force_les_derniers_jours():
+    """Quand le quota ne tient plus dans les jours restants, la meteo n'a plus voix.
+
+    Vecu en 2025-2026 : treize des vingt-deux Rouge places en mars, jusqu'au 31.
+    Le modele, entraine sur des hivers consommes des fevrier, annonçait Bleu. Ce
+    n'est pourtant pas une prevision mais une arithmetique -- d'ou une contrainte
+    plutot qu'un apprentissage.
+    """
+    from src import model, rules
+    # 25 mars 2026 : un mercredi, et il ne reste que cinq jours ouvres avant le 31.
+    cible = date(2026, 3, 25)
+    assert rules.remaining_rouge_days(cible) == 5, rules.remaining_rouge_days(cible)
+
+    meta = [{"target": cible, "is_holiday": False, "rouge_left": 5, "blanc_left": 10}]
+    probs = np.array([[0.90, 0.08, 0.02]])   # le modele voyait Bleu
+    out = model.constrain(probs, meta)
+    assert out[0][2] == 1.0, f"le Rouge devait etre impose, obtenu {out[0]}"
+
+    # Avec de la marge, rien n'est impose : la prevision reprend la main.
+    meta[0]["rouge_left"] = 2
+    assert model.constrain(probs, meta)[0][2] < 0.10
+
+
+def test_une_regle_plus_forte_prime_sur_le_quota():
+    """Un dimanche reste Bleu meme si le quota est a court de jours.
+
+    La contrainte de quota impose ; le masque contractuel interdit. L'interdit doit
+    gagner, sinon on annoncerait un Rouge un jour ou il n'en tombe jamais.
+    """
+    from src import model
+    dimanche = date(2026, 3, 29)
+    assert dimanche.weekday() == 6
+    meta = [{"target": dimanche, "is_holiday": False, "rouge_left": 5, "blanc_left": 10}]
+    out = model.constrain(np.array([[0.30, 0.20, 0.50]]), meta)
+    assert out[0][2] == 0.0, f"un dimanche ne peut pas etre Rouge, obtenu {out[0]}"
+    assert abs(out[0].sum() - 1.0) < 1e-9
+
+
 def test_les_periodes_sont_embiquees():
     """« eligibles » est inclus dans « hiver », lui-meme inclus dans « tout »."""
     import app as web

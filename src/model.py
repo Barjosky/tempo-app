@@ -24,12 +24,28 @@ def _mask_matrix(meta):
 
 
 def constrain(probs, meta):
-    """Annule les couleurs impossibles et renormalise."""
+    """Annule les couleurs impossibles, renormalise, puis impose les Rouge forces.
+
+    Le masque enleve ce que le contrat interdit. La contrainte de quota fait
+    l'inverse : elle impose ce que le contrat oblige. Quand il ne reste pas plus de
+    jours eligibles que de Rouge a placer, tous ces jours SONT Rouge -- ce n'est pas
+    une prevision mais une consequence, et la laisser apprendre au modele serait lui
+    demander d'extrapoler un regime qu'il n'a presque jamais vu.
+    """
     masked = probs * _mask_matrix(meta)
     total = masked.sum(axis=1, keepdims=True)
     fallback = np.zeros_like(masked)
     fallback[:, 0] = 1.0
-    return np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
+    out = np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
+
+    forces = np.array([rules.rouge_force(m["target"], m.get("rouge_left"))
+                       for m in meta])
+    if forces.any():
+        # Le masque a pu interdire le Rouge (dimanche, ferie) : on n'impose que la
+        # ou il reste possible, sinon on contredirait une regle plus forte.
+        forces &= out[:, 2] > 0
+        out[forces] = [0.0, 0.0, 1.0]
+    return out
 
 
 class ClimatologyBaseline:

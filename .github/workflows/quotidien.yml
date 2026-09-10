@@ -25,6 +25,10 @@ on:
         description: "Comparer les configurations de modele (tres long)"
         type: boolean
         default: false
+      saisons:
+        description: "Profiler les saisons : pourquoi certains hivers sont durs"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -102,6 +106,10 @@ jobs:
       # Purement informatif lui aussi : la conclusion se lit dans les logs et se
       # reporte a la main dans config.py, plutot que de laisser un script decider
       # seul d'un reglage sur quatre saisons.
+      - name: Profiler les saisons
+        if: inputs.saisons == true
+        run: python diagnostic_saison.py
+
       - name: Comparer les configurations de modele
         if: inputs.selection == true
         run: python selection_modele.py
