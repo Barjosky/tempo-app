@@ -203,6 +203,25 @@ def test_une_regle_plus_forte_prime_sur_le_quota():
     assert abs(out[0].sum() - 1.0) < 1e-9
 
 
+def test_le_profil_de_saison_tourne():
+    """Les scripts d'analyse n'avaient aucun filet : celui-ci a casse en CI.
+
+    `diagnostic_saison.py` appelait encore un compteur de jours deplace de features
+    vers rules. Rien ne l'a vu -- ni les tests, ni l'import, puisque l'erreur ne
+    survient qu'a l'execution. Ce profil ne coute qu'un peu d'arithmetique de
+    calendrier sur la base synthetique : autant le passer a chaque fois.
+    """
+    import diagnostic_saison
+    s = store()
+    saisons = list(diagnostic_saison.saisons_completes(s))
+    assert saisons, "la base synthetique devrait contenir des saisons completes"
+    saison, jours = saisons[0]
+    p = diagnostic_saison.profil(s, saison, jours)
+    assert p["n"] == config.QUOTA_ROUGE, p["n"]
+    assert p["marge_min"] >= 0, "la marge ne peut pas etre negative : le quota tiendrait pas"
+    assert p["premier"] <= p["dernier"]
+
+
 def test_les_periodes_sont_embiquees():
     """« eligibles » est inclus dans « hiver », lui-meme inclus dans « tout »."""
     import app as web

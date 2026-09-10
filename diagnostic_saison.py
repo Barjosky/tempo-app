@@ -56,7 +56,7 @@ def profil(store, saison, jours):
             continue
         deja = sum(1 for r in rouges if r < d)
         reste_quota = config.QUOTA_ROUGE - deja
-        reste_jours = features._remaining_rouge_days(d)
+        reste_jours = rules.remaining_rouge_days(d)
         marge = reste_jours - reste_quota
         if marge < marge_min:
             marge_min, date_marge_min, restants_alors = marge, d, reste_quota
