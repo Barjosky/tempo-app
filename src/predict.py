@@ -20,7 +20,20 @@ MODEL_PATH = config.DATA_DIR / "model.joblib"
 # a une seule feature, et un modele d'avant a fait planter la collecte en production
 # (« CalibratedClassifierCV object is not iterable »). Un depickle est un contrat, et
 # ce numero est le contrat.
-MODEL_FORMAT = 2
+MODEL_FORMAT = 3
+
+
+def structure(gbm):
+    """Empreinte des attributs du modele, pour detecter tout changement de structure.
+
+    Le numero de format ci-dessus suppose qu'on pense a l'incrementer. Trois pannes
+    de production plus tard, la troisieme etant justement un oubli d'incrementation,
+    autant ne plus compter la-dessus : la liste des attributs se calcule toute seule,
+    et le moindre ajout -- comme le second etage Blanc/Rouge -- invalide de lui-meme
+    les modeles d'avant. Le numero reste, pour les changements de SENS a structure
+    identique, que rien ne peut deviner.
+    """
+    return sorted(vars(gbm))
 
 
 def train(conn, store=None, class_weight=None, rouge_threshold=None):
@@ -33,6 +46,7 @@ def train(conn, store=None, class_weight=None, rouge_threshold=None):
                            rouge_threshold=rouge_threshold).fit(X, y, meta)
     version = f"v1-{date.today():%Y%m%d}-n{len(X)}"
     joblib.dump({"model": gbm, "version": version, "format": MODEL_FORMAT,
+                 "structure": structure(gbm),
                  "features": features.FEATURE_NAMES}, MODEL_PATH)
     conn.execute(
         "INSERT OR REPLACE INTO model_runs (version, trained_at, metrics_json) VALUES (?,?,?)",
@@ -58,6 +72,13 @@ def load(conn=None):
         raise ModeleObsolete(
             f"modele au format {bundle.get('format', 'inconnu')}, le code attend le "
             f"format {MODEL_FORMAT} -- relancer `python collector.py --train`")
+    attendue = structure(model.TempoModel())
+    if bundle.get("structure") != attendue:
+        manquants = set(attendue) - set(bundle.get("structure") or [])
+        raise ModeleObsolete(
+            "structure du modele differente de celle du code"
+            + (f" (attributs absents : {', '.join(sorted(manquants))})" if manquants else "")
+            + " -- relancer `python collector.py --train`")
     # Puis les features : un modele entraine avant l'ajout d'une colonne attend un
     # nombre de colonnes qui n'existe plus. Sans ce controle il predirait sur des
     # colonnes decalees, en silence : mieux vaut refuser de servir que mal servir.

@@ -157,9 +157,22 @@ def test_un_modele_d_un_autre_format_est_refuse():
             assert "format" in str(exc)
         assert predict.besoin_d_entrainement() is True
 
-        # Et le format courant, lui, doit passer le controle de format.
-        joblib.dump({"model": None, "version": "v1", "features": features.FEATURE_NAMES,
-                     "format": predict.MODEL_FORMAT}, chemin)
+        # Un attribut ajoute a TempoModel doit suffire, SANS toucher au numero de
+        # format : c'est l'oubli qui a provoque la troisieme panne de production.
+        gbm = model.TempoModel()
+        complete = predict.structure(gbm)
+        joblib.dump({"model": gbm, "version": "v1", "features": features.FEATURE_NAMES,
+                     "format": predict.MODEL_FORMAT,
+                     "structure": [a for a in complete if a != "clf"]}, chemin)
+        try:
+            predict.load()
+            raise AssertionError("une structure amputee a ete acceptee")
+        except predict.ModeleObsolete as exc:
+            assert "structure" in str(exc)
+
+        # Et un modele conforme sur les deux points doit passer.
+        joblib.dump({"model": gbm, "version": "v2", "features": features.FEATURE_NAMES,
+                     "format": predict.MODEL_FORMAT, "structure": complete}, chemin)
         assert predict.besoin_d_entrainement() is False
     finally:
         predict.MODEL_PATH = ancien
