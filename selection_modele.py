@@ -55,6 +55,10 @@ CANDIDATS = [
     # Garde une trace des pistes deja mesurees sans succes, pour ne pas les
     # reproposer plus tard en croyant les avoir oubliees.
     ("les deux + ensemble", dict(excluded=[], force_quota=True, n_seeds=5)),
+    # La case manquante du precedent comparatif : les features de marge degradaient
+    # legerement le plancher sans ensemble (1,053 contre 1,014), reste a savoir si
+    # elles le font encore une fois les modeles diversifies.
+    ("quota + ensemble", dict(excluded=MARGE, force_quota=True, n_seeds=5)),
 ]
 
 

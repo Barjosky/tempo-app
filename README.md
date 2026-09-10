@@ -171,6 +171,38 @@ annoncée à la fréquence réellement observée. Le constat, sur les jours éli
 Ces écarts de 15 points passent tout juste le critère de viabilité (< 20 points). Ils
 n'étaient visibles nulle part avant.
 
+## L'hiver 2025-2026, ou pourquoi une fin de saison n'est pas météorologique
+
+Sur les jours où le Rouge est possible, le modèle faisait 66,8 % de réussite en
+2024-2025 et **51,4 %** en 2025-2026. La cause n'a rien à voir avec le temps qu'il a
+fait.
+
+| Saison | Déc | Jan | Fév | Mars | Marge minimale | Jours **forcés** |
+|---|---|---|---|---|---|---|
+| 2023-2024 | — | — | — | — | 0 le 29/03 | 1 |
+| 2024-2025 | 8 | 13 | 1 | 0 | 1 le 31/03 | 0 |
+| **2025-2026** | 2 | 6 | 1 | **13** | **0 le 13/03** | **13** |
+
+EDF est entré dans mars 2026 avec treize Rouge non consommés. Le 13 mars, il restait
+exactement treize jours éligibles pour treize Rouge à placer : **à partir de cette
+date, chaque jour restant était Rouge par arithmétique**, quelle que soit la météo.
+Le modèle, lui, annonçait Bleu — entraîné sur des hivers soldés dès février, il
+n'avait jamais rencontré une fin de saison sous cette contrainte.
+
+`rouge_pressure` portait pourtant l'information, et c'est même la seule feature
+individuellement porteuse des soixante. Mais un arbre ne sait pas extrapoler : au-delà
+de la dernière valeur rencontrée à l'entraînement, il rend toujours la même feuille.
+
+D'où le choix d'en faire une **règle plutôt qu'un apprentissage**. Quand la marge de
+placement tombe à zéro, `constrain()` impose le Rouge, comme le masque contractuel
+interdit déjà le Rouge un dimanche. Le contrat n'est pas qu'une liste d'interdits : il
+oblige aussi. Mesuré, cela fait passer 2025-2026 de 1,085 à 0,900 de log-loss et le
+rappel Rouge de 72 % à 82 %.
+
+Deux détails qui comptent : le masque garde la priorité, donc un dimanche reste Bleu
+même sous quota tendu ; et donner la marge au modèle comme simple *feature* ne suffit
+pas — mesurée seule, elle ne relève pas le plancher. C'est la contrainte qui paie.
+
 ## Ce que chaque groupe de features apporte réellement
 
 Mesuré par permutation sur trois saisons, jours éligibles uniquement. La colonne qui

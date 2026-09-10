@@ -86,15 +86,16 @@ def main():
           f"{'% en mars':>10}   repartition")
     for s, p in profils.items():
         mois = " ".join(f"{m}:{n}" for m, n in p["par_mois"].items())
-        print(f"{s:>12} {p['n']:>3} {p['premier']:%d/%m/%y:>11} "
-              f"{p['dernier']:%d/%m/%y:>11} {p['part_mars']:>9.0%}   {mois}")
+        a, b = f"{p['premier']:%d/%m/%y}", f"{p['dernier']:%d/%m/%y}"
+        print(f"{s:>12} {p['n']:>3} {a:>11} {b:>11} {p['part_mars']:>9.0%}   {mois}")
 
     print("\nMarge de placement : jours eligibles restants moins Rouge restants.")
     print("A zero, tous les jours restants sont Rouge -- la meteo n'y peut plus rien.\n")
     print(f"{'saison':>12} {'marge min':>10} {'atteinte le':>12} "
           f"{'quota restant':>14} {'jours forces':>13}")
     for s, p in profils.items():
-        print(f"{s:>12} {p['marge_min']:>10} {p['date_marge_min']:%d/%m/%y:>12} "
+        quand = f"{p['date_marge_min']:%d/%m/%y}"
+        print(f"{s:>12} {p['marge_min']:>10} {quand:>12} "
               f"{p['restants_alors']:>14} {p['forces']:>13}")
 
     serres = [s for s, p in profils.items() if p["marge_min"] <= 5]

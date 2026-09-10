@@ -96,13 +96,15 @@ EXCLUDED_FEATURES = []
 # elle degrade nettement 2024-2025 (0,638 -> 0,720) sans relever le plancher.
 WINTER_WEIGHT = 1.0
 
-# Nombre de modeles moyennes. A 1 : desactive.
-# Premiere tentative a 5, sans aucun effet -- et pour une raison instructive : avec
+# Nombre de modeles moyennes.
+# Premiere tentative a 5 sans aucun effet, pour une raison instructive : avec
 # early_stopping desactive et moins de lignes que le seuil de sous-echantillonnage du
-# binning, HistGradientBoosting est DETERMINISTE. Les cinq graines produisaient cinq
-# modeles identiques, pour cinq fois le temps de calcul et cinq fois la taille en
-# cache. Au-dessus de 1, `max_features` introduit la diversite qui manquait.
-N_SEEDS = 1
+# binning, HistGradientBoosting est DETERMINISTE -- les cinq graines rendaient cinq
+# modeles identiques. Une fois `max_features` ajoute pour diversifier les tirages, le
+# gain apparaît : la pire saison passe de 1,014 a 0,902 de log-loss, et 2023-2024
+# s'ameliore de 1,053 a 0,809. Cinq fois le temps de calcul, mais c'est le poste ou
+# la fiabilite se gagne.
+N_SEEDS = 5
 
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
 # C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.
