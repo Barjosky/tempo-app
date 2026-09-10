@@ -277,12 +277,77 @@ J+1 la prévision de consommation est juste, à J+10 c'est du bruit. La même co
 n'a pas la même valeur selon l'échéance — et le modèle unique les traite pourtant
 toutes pareil. Piste sérieuse, non explorée.
 
+## Le seuil d'alerte, recalé sous contrainte de quota
+
+Balayage sur 5 saisons, jours éligibles. Les deux colonnes de droite sont celles qui
+comptent, puisque c'est la pire saison qui décide ici :
+
+| Seuil | Rappel | Précision | Pire : précision | Pire : rappel | Fausses / éch. / hiver |
+|---|---|---|---|---|---|
+| 0,10 | 92 % | 55 % | 27 % | 65 % | 22,6 |
+| **0,25** (retenu) | 84 % | 67 % | 42 % | 48 % | 11,9 |
+| 0,30 | 81 % | 70 % | 48 % | 45 % | 9,8 |
+| 0,40 | 76 % | 75 % | 57 % | 45 % | 6,9 |
+| 0,50 | 72 % | 81 % | **62 %** | 45 % | 4,8 |
+| 0,65 | 62 % | 90 % | 75 % | 42 % | 2,0 |
+
+**Le rappel de la pire saison est plat de 0,30 à 0,55** — 45 % partout — pendant que sa
+précision monte de 48 % à 67 %. Au-delà de 0,30, monter le seuil ne coûte donc presque
+rien là où le modèle est le plus faible, et rapporte beaucoup.
+
+Le détail par saison montre deux régimes opposés :
+
+| Saison | Détectés | Fausses alertes | Rappel | Précision |
+|---|---|---|---|---|
+| 2021-2022 | 19,9/22 | 7,3 | 90 % | 73 % |
+| 2022-2023 | 21,5/22 | 9,5 | 98 % | 69 % |
+| 2023-2024 | 10,5/22 | 1,4 | 48 % | 88 % |
+| 2024-2025 | 18,3/22 | 11,4 | 83 % | 62 % |
+| 2025-2026 | 22,0/22 | **30,0** | 100 % | 42 % |
+| **Total** | **92,2/110** | 11,9 | 84 % | 67 % |
+
+En 2023-2024 le modèle est prudent et rate la moitié des Rouge ; en 2025-2026 il les
+trouve tous, au prix de trente fausses alertes. C'est la saison des treize jours de mars
+forcés par arithmétique — la contrainte de quota l'y pousse, et c'est le prix du gain de
+rappel obtenu ailleurs.
+
+### En euros, à J+1
+
+`analyse_euros.py`, 8 kWh décalables, gain de 0,568 € par kWh un jour Rouge :
+
+| Gêne consentie / alerte inutile | Seuil optimal | € / saison | Alertes | Justes | Rouge ratés |
+|---|---|---|---|---|---|
+| 0,00 € | 0,05 | 99 € | 46 | 20 | 2 |
+| 0,50 € | 0,10 | 86 € | 40 | 20 | 2 |
+| **1,00 €** | **0,25** | 81 € | 28 | 19 | 3 |
+| 2,00 € | 0,30 | 74 € | 26 | 19 | 3 |
+| 5,00 € | 0,55 | 63 € | 18 | 16 | 6 |
+
+**Le seuil de 0,25 est exactement l'optimum si une alerte inutile vaut 1 € de gêne.**
+Il n'avait pas été choisi comme ça — c'est une confirmation indépendante, pas une
+justification rétrospective.
+
+Ce que rapporte un jour de contrainte consenti :
+
+| Stratégie | € / saison | Jours gênés | € / jour gêné |
+|---|---|---|---|
+| tout décaler, tous les jours | 185 € | 365 | 0,51 € |
+| suivre le modèle (seuil 0,25) | 90 € | 28 | 3,25 € |
+| oracle (les 22 vrais Rouge) | 100 € | 22 | 4,54 € |
+
+Le modèle capte **90 % des euros de l'oracle** pour six jours de contrainte de plus.
+
+### Le seuil Blanc
+
+| Seuil | Rappel Blanc | Précision Blanc | Bleu abîmés |
+|---|---|---|---|
+| 0,30 | 79 % | 53 % | 13,3 |
+| **0,40** (retenu) | 65 % | 57 % | 9,2 |
+| 0,50 | 52 % | 61 % | 6,2 |
+
+Rien ne pousse à en changer : la précision progresse lentement, le rappel chute vite.
+
 ## Pistes non explorées
-- **Le seuil d'alerte n'a pas été recalé** depuis la contrainte de quota, ni sur la
-  courbe en euros (`analyse_euros.py`).
-- **Le tableau des seuils du README est périmé** : produit quand `analyse_seuils.py`
-  n'appelait pas `fit_demand_model`, donc avec toutes les colonnes de charge
-  résiduelle à NaN.
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
   pareil. `horizon` est bien une colonne, mais un arbre doit alors dépenser sa capacité
