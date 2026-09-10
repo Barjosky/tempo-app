@@ -106,6 +106,11 @@ WINTER_WEIGHT = 1.0
 # la fiabilite se gagne.
 N_SEEDS = 5
 
+# Couper la decision en deux etages : « journee tendue ? » puis « Blanc ou Rouge ? ».
+# A False tant que la mesure n'a pas tranche. Vise la seule faiblesse qui reste :
+# 220 jours Blanc annonces Rouge, et 71 % des fausses alertes tombant sur du Blanc.
+TWO_STAGE = False
+
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
 # C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.
 FORCE_QUOTA_ROUGE = True

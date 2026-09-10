@@ -11,19 +11,20 @@ pour quelqu'un qui doit decider demain matin.
 C'est donc la PIRE SAISON qui departage ici, pas la moyenne. Un candidat ne gagne
 que s'il releve le plancher.
 
-Ce qui est compare ici vise la fin de saison sous contrainte de quota, cause
-identifiee du pire hiver : en 2025-2026, treize des vingt-deux Rouge sont tombes en
-mars, jusqu'au 31. Deux facons de la traiter, seules puis ensemble :
+Ce qui est compare ici vise la derniere faiblesse connue : l'hesitation entre Blanc
+et Rouge. Le modele repere tres bien les journees tendues et n'arrive pas a trancher
+dedans -- 220 jours Blanc annonces Rouge, et 71 % des fausses alertes tombant sur du
+Blanc plutot que sur du Bleu.
 
-  - donner au modele la marge de placement en JOURS plutot qu'en ratio, parce qu'un
-    arbre ne sait pas extrapoler un ratio au-dela des valeurs vues ;
-  - imposer le Rouge quand la marge est nulle, parce que c'est alors une
-    arithmetique et non une prevision.
+L'hypothese est que le probleme est mal pose. Une seule question a trois reponses,
+ou le Bleu fait 82 % des exemples : le modele apprend surtout a reconnaitre les
+journees sans enjeu, et l'arbitrage Blanc/Rouge, qui ne concerne qu'un jour sur sept,
+ne pese presque rien dans sa fonction de cout.
 
-Trois pistes ont deja ete mesurees SANS succes et ne sont pas reproposees : retirer
-les features d'offre (ameliore la moyenne, degrade le plancher), ponderer vers
-l'hiver (degrade 2024-2025), moyenner plusieurs graines (sans effet tant que rien ne
-diversifie les modeles).
+Le candidat le coupe en deux decisions -- « journee tendue ? », puis « Blanc ou
+Rouge ? » entrainee sur les seuls jours tendus. Ce second etage voit alors 43 Blanc
+contre 22 Rouge, un probleme equilibre, et peut consacrer toute sa capacite a la
+frontiere qui echoue.
 
 Avertissement d'honnetete : quatre saisons evaluables, c'est peu. Comparer beaucoup
 de variantes finirait par choisir celle qui colle le mieux a ces quatre-la. D'ou une
@@ -51,18 +52,20 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 # de config combler un trou : le jour ou N_SEEDS est passe de 1 a 5, les candidats
 # qui ne le precisaient pas ont silencieusement herite de l'ensemble, et le tableau
 # comparait six variantes deja ensemblees en les etiquetant autrement.
+# Le comparatif ne garde que la configuration retenue et la piste a l'essai : chaque
+# candidat coute quatre entrainements, et une liste longue finit par elire la variante
+# qui colle le mieux a quatre saisons plutot que celle qui generalise.
+#
+# Deja mesure et conserve : contrainte de quota + marge en jours + ensemble
+#   (plancher 1,093 -> 0,901 ; rappel Rouge 73 % -> 82 %).
+# Deja mesure et ecarte : retrait des features d'offre (ameliore la moyenne, degrade
+#   le plancher), ponderation vers l'hiver (degrade 2024-2025), ensemble sans
+#   diversification (strictement sans effet).
+RETENU = dict(excluded=[], force_quota=True, n_seeds=5)
+
 CANDIDATS = [
-    ("reference", dict(excluded=MARGE, force_quota=False, n_seeds=1)),
-    ("marge en jours", dict(excluded=[], force_quota=False, n_seeds=1)),
-    ("contrainte quota", dict(excluded=MARGE, force_quota=True, n_seeds=1)),
-    ("les deux", dict(excluded=[], force_quota=True, n_seeds=1)),
-    # Garde une trace des pistes deja mesurees sans succes, pour ne pas les
-    # reproposer plus tard en croyant les avoir oubliees.
-    ("les deux + ensemble", dict(excluded=[], force_quota=True, n_seeds=5)),
-    # La case manquante du precedent comparatif : les features de marge degradaient
-    # legerement le plancher sans ensemble (1,053 contre 1,014), reste a savoir si
-    # elles le font encore une fois les modeles diversifies.
-    ("quota + ensemble", dict(excluded=MARGE, force_quota=True, n_seeds=5)),
+    ("retenu (1 etage)", dict(RETENU, two_stage=False)),
+    ("deux etages", dict(RETENU, two_stage=True)),
 ]
 
 

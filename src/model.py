@@ -95,7 +95,7 @@ class TempoModel:
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
     def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
                  blanc_threshold=None, excluded=None, winter_weight=None,
-                 n_seeds=None, force_quota=None):
+                 n_seeds=None, force_quota=None, two_stage=None):
         self.seed = seed
         self.excluded = config.EXCLUDED_FEATURES if excluded is None else excluded
         self.winter_weight = (config.WINTER_WEIGHT if winter_weight is None
@@ -103,12 +103,14 @@ class TempoModel:
         self.n_seeds = config.N_SEEDS if n_seeds is None else n_seeds
         self.force_quota = (config.FORCE_QUOTA_ROUGE if force_quota is None
                             else force_quota)
+        self.two_stage = config.TWO_STAGE if two_stage is None else two_stage
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
         self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
                                 else blanc_threshold)
         self.clf = None       # liste de modeles, moyennee a la prediction
+        self.clf_tendu = None  # second etage : Blanc contre Rouge
         self.dead_columns = None
 
     def _base(self, seed):
@@ -185,16 +187,48 @@ class TempoModel:
         # passe et que le suivant casse ; la moyenne l'attenue.
         self.clf = [self._fit_calibrated(Xn, y, meta, self.seed + k)
                     for k in range(max(1, self.n_seeds))]
+
+        if self.two_stage:
+            # Second etage : Blanc ou Rouge, entraine sur les SEULS jours tendus.
+            #
+            # Le modele a trois classes est ecrase par les Bleu, qui font 82 % des
+            # exemples : il apprend surtout a les reconnaitre, et l'arbitrage entre
+            # Blanc et Rouge -- qui ne se joue que sur un jour sur sept -- ne pese
+            # presque rien dans sa fonction de cout. C'est pourtant la que tout
+            # echoue : 220 jours Blanc annonces Rouge, et 71 % des fausses alertes
+            # tombant sur du Blanc.
+            #
+            # Isole, ce second etage voit un probleme equilibre (43 Blanc contre 22
+            # Rouge) et peut consacrer toute sa capacite a cette frontiere-la.
+            tendu = y != config.BLEU
+            if tendu.sum() >= 100 and len(set(y[tendu].tolist())) == 2:
+                mt = [m for m, k in zip(meta, tendu) if k]
+                self.clf_tendu = [
+                    self._fit_calibrated(Xn[tendu], y[tendu], mt, self.seed + 100 + k)
+                    for k in range(max(1, self.n_seeds))]
         return self
+
+    def _moyenne(self, modeles, Xn, colonnes):
+        """Probabilites moyennees sur les modeles, remises dans l'ordre des couleurs."""
+        out = np.zeros((len(Xn), len(colonnes)))
+        for clf in modeles:
+            raw = clf.predict_proba(Xn)
+            for i, cls in enumerate(clf.classes_):
+                out[:, colonnes.index(int(cls))] += raw[:, i]
+        return out / len(modeles)
 
     def predict_proba(self, X, meta):
         Xn = self._neutralise(X)
-        ordered = np.zeros((len(X), 3))
-        for clf in self.clf:
-            raw = clf.predict_proba(Xn)
-            for i, cls in enumerate(clf.classes_):
-                ordered[:, CLASSES.index(int(cls))] += raw[:, i]
-        ordered /= len(self.clf)
+        ordered = self._moyenne(self.clf, Xn, CLASSES)
+
+        if self.clf_tendu:
+            # La masse « pas Bleu » vient du premier etage, sa repartition du second.
+            # Le premier reste donc juge de « tendu ou non », le second de la couleur,
+            # et les probabilites continuent de sommer a un.
+            tendu = ordered[:, 1] + ordered[:, 2]
+            part = self._moyenne(self.clf_tendu, Xn, [config.BLANC, config.ROUGE])
+            ordered[:, 1] = tendu * part[:, 0]
+            ordered[:, 2] = tendu * part[:, 1]
         return constrain(ordered, meta, self.force_quota)
 
 
