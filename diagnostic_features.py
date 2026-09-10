@@ -76,8 +76,15 @@ def scores(gbm, X, y, meta):
             float((preds == y).mean()))
 
 
-def prepare(store, season, seed=0):
-    """Entraine sur le passe de la saison, renvoie le jeu de test deja restreint."""
+def prepare(store, season, seed=0, horizon=None):
+    """Entraine sur le passe de la saison, renvoie le jeu de test deja restreint.
+
+    `horizon` restreint le jeu de TEST a une seule echeance. Sans lui, une feature qui
+    n'existe qu'a J+1 -- la prevision de consommation de RTE, publiee la veille -- est
+    jugee sur un jeu ou elle est NaN neuf fois sur dix : permuter sa colonne ne touche
+    qu'un dixieme des lignes, et elle sort mecaniquement en poids mort. Le verdict
+    porterait alors sur sa rarete, pas sur sa valeur.
+    """
     store.fit_demand_model(calendrier.season_start(season))
     train_end = calendrier.season_start(season) - timedelta(days=1)
     Xtr, ytr, mtr = features.build_dataset(
@@ -88,6 +95,10 @@ def prepare(store, season, seed=0):
         return None
     gbm = model.TempoModel(seed=seed).fit(Xtr, ytr, mtr)
     ev = backtest.evaluables(mte)
+    if horizon is not None:
+        ev = ev & np.array([m["horizon"] == horizon for m in mte])
+    if not ev.any():
+        return None
     return gbm, Xte[ev], yte[ev], [m for m, k in zip(mte, ev) if k]
 
 
@@ -147,14 +158,19 @@ def _tableau(titre, lignes, seuil_utile):
 
 def main():
     reps = _arg("--reps", REPETITIONS)
+    horizon = _arg("--horizon", None) if "--horizon" in sys.argv else None
     conn = db.connect()
     store = features.FeatureStore(conn)
     rng = np.random.default_rng(0)
 
+    if horizon is not None:
+        print(f"Mesure restreinte a l'echeance J+{horizon} : un dixieme des lignes, "
+              f"mais la seule ou certaines features existent.\n")
+
     prepares = []
     for season in SEASONS:
         print(f"Entrainement pour {season}...", flush=True)
-        p = prepare(store, season)
+        p = prepare(store, season, horizon=horizon)
         if p:
             prepares.append((season, p))
             gbm, X, y, meta = p

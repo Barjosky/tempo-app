@@ -6,6 +6,7 @@
 Les probabilites sont mises en cache dans reports/probs_par_saison.npz, ce qui permet
 de reevaluer n'importe quel seuil instantanement sans reentrainer le modele.
 """
+import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -14,10 +15,41 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config
-from src import db, features, model
+from src import backtest, db, features, model
 from src.sources import calendrier
 
 SEASONS = ["2021-2022", "2022-2023", "2023-2024", "2024-2025", "2025-2026"]
+
+
+def signature():
+    """Ce qui rend un cache de probabilites caduc.
+
+    Un seuil se choisit sur des probabilites ; si le modele qui les a produites n'est
+    plus celui qui tourne, le seuil retenu ne veut rien dire -- et rien ne le
+    signalerait. Meme lecon que le format du modele : un controle qui repose sur le
+    fait de penser a `--refit` n'est pas un controle.
+    """
+    return json.dumps({
+        "features": len(features.FEATURE_NAMES),
+        "exclues": sorted(config.EXCLUDED_FEATURES),
+        "force_quota": config.FORCE_QUOTA_ROUGE,
+        "graines": config.N_SEEDS,
+        "deux_etages": config.TWO_STAGE,
+        "saisons": SEASONS,
+    }, sort_keys=True)
+
+
+def cache_perime(path):
+    """(perime ?, raison lisible)."""
+    if not path.exists():
+        return True, "aucun cache"
+    data = np.load(path, allow_pickle=False)
+    if "signature" not in data.files:
+        return True, "cache d'une version anterieure a ce controle"
+    ancienne = str(data["signature"])
+    if ancienne != signature():
+        return True, "la configuration du modele a change depuis le cache"
+    return False, ""
 
 
 def compute_probs(path):
@@ -38,15 +70,28 @@ def compute_probs(path):
         dump[f"{season}_probs"] = gbm.predict_proba(Xte, mte)
         dump[f"{season}_y"] = np.array(yte)
         dump[f"{season}_horizon"] = np.array([m["horizon"] for m in mte])
+        # Le perimetre de notation voyage avec les probabilites : un seuil doit se
+        # juger sur les jours ou le Rouge est possible, comme tout le reste du projet.
+        # Ailleurs le masque contractuel met deja p_rouge a zero, et ces lignes ne
+        # font que gonfler le denominateur d'une precision flatteuse.
+        dump[f"{season}_eval"] = backtest.evaluables(mte)
         print(f"  {season} rejouee ({len(Xte)} predictions)", flush=True)
+    dump["signature"] = np.array(signature())
     np.savez(path, **dump)
+
+
+def _eval_mask(data, season):
+    """Jours ou le Rouge est possible. Absent des caches d'avant : tout est garde."""
+    cle = f"{season}_eval"
+    return data[cle] if cle in data.files else slice(None)
 
 
 def per_season(data, threshold):
     out = {}
     for season in SEASONS:
-        y = data[f"{season}_y"]
-        p = data[f"{season}_probs"][:, 2]
+        ev = _eval_mask(data, season)
+        y = data[f"{season}_y"][ev]
+        p = data[f"{season}_probs"][ev][:, 2]
         actual = y == config.ROUGE
         flagged = p >= threshold
         hits = (flagged & actual).sum()
@@ -62,11 +107,17 @@ def per_season(data, threshold):
 
 def main():
     path = config.REPORTS_DIR / "probs_par_saison.npz"
-    if "--refit" in sys.argv or not path.exists():
+    perime, raison = cache_perime(path)
+    if "--refit" in sys.argv or perime:
+        if perime and "--refit" not in sys.argv:
+            print(f"Recalcul force : {raison}.")
         print("Rejeu des 5 saisons :")
         compute_probs(path)
     data = np.load(path)
-    print(f"\nSeuil actuellement retenu : {config.ROUGE_ALERT_THRESHOLD:.2f}\n")
+    perimetre = ("jours eligibles (lun-ven, nov-mars, hors feries)"
+                 if f"{SEASONS[0]}_eval" in data.files else "TOUTES les predictions")
+    print(f"\nSeuil actuellement retenu : {config.ROUGE_ALERT_THRESHOLD:.2f}")
+    print(f"Mesure sur : {perimetre}\n")
 
     print(f"{'seuil':>6} {'rappel moy':>11} {'prec moy':>9} {'ecart-type':>11} "
           f"{'pire prec':>10} {'pire rappel':>12} {'fausses/ech':>12}")
@@ -106,8 +157,9 @@ def main():
     for t in np.arange(0.20, 0.85, 0.05):
         rec, pre, abimes = [], [], []
         for season in SEASONS:
-            y = data[f"{season}_y"]
-            p = data[f"{season}_probs"]
+            ev = _eval_mask(data, season)
+            y = data[f"{season}_y"][ev]
+            p = data[f"{season}_probs"][ev]
             flag = p[:, 1] >= t
             actual = y == config.BLANC
             hits = (flag & actual).sum()

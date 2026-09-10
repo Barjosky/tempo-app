@@ -384,3 +384,36 @@ def _jours(debut, fin):
     while d <= fin:
         yield d
         d += timedelta(days=1)
+
+
+def test_un_cache_de_probabilites_perime_est_detecte():
+    """Un seuil choisi sur les probabilites d'un autre modele ne veut rien dire.
+
+    Troisieme incarnation de la meme lecon : le format du modele, la structure de ses
+    attributs, et maintenant le cache de probabilites. A chaque fois, le controle qui
+    reposait sur la memoire de celui qui modifie n'a rien vu venir.
+    """
+    import analyse_seuils
+
+    with tempfile.TemporaryDirectory() as tmp:
+        chemin = Path(tmp) / "probs.npz"
+        assert analyse_seuils.cache_perime(chemin)[0], "un cache absent doit etre perime"
+
+        # Un cache ecrit avec la configuration courante est accepte...
+        np.savez(chemin, signature=np.array(analyse_seuils.signature()))
+        perime, raison = analyse_seuils.cache_perime(chemin)
+        assert not perime, raison
+
+        # ...et cesse de l'etre des qu'un reglage du modele bouge.
+        avant = config.FORCE_QUOTA_ROUGE
+        try:
+            config.FORCE_QUOTA_ROUGE = not avant
+            perime, raison = analyse_seuils.cache_perime(chemin)
+            assert perime, "un changement de configuration doit perimer le cache"
+            assert raison, "la raison doit etre lisible"
+        finally:
+            config.FORCE_QUOTA_ROUGE = avant
+
+        # Un cache d'avant ce controle n'a pas de signature : perime lui aussi.
+        np.savez(chemin, autre=np.array([1.0]))
+        assert analyse_seuils.cache_perime(chemin)[0]
