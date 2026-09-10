@@ -242,15 +242,51 @@ Ce chiffre sert surtout à ne pas se tromper de cause : le plancher a bougé de 
 runs ne tournaient pas sur la même base (la consommation avait été recollectée entre
 les deux). Deux mesures prises sur des données différentes ne se comparent pas.
 
+## La prévision de RTE : mesurée à son échéance, sans valeur
+
+Elle est publiée la veille pour le lendemain, donc elle n'existe **qu'à J+1**. La
+permutation la jugeait pourtant sur les dix échéances, où elle est NaN neuf fois sur
+dix : détruire sa colonne ne touchait qu'un dixième des lignes, et elle sortait
+mécaniquement en poids mort. **Le verdict portait sur sa rareté, pas sur sa valeur.**
+
+Mesurée à J+1 seulement, la réponse ne change pas :
+
+| | +log-loss | bruit | pire saison |
+|---|---|---|---|
+| groupe « prévision RTE » | **−0,004** | 0,005 | −0,012 |
+| `rte_forecast_mw` | +0,0005 | 0,0006 | +0,0001 |
+| `rte_forecast_gap` | −0,006 | 0,004 | −0,017 |
+
+Sans valeur, cette fois pour de bon. L'explication tient au tableau voisin :
+`residual_mw` vaut **+0,110** à J+1. La consommation attendue est déjà connue par le
+modèle de demande maison, calibré sur éCO2mix — la prévision de RTE ne dit rien
+qu'il ignore. Piste close.
+
+### Ce que J+1 révèle en passant
+
+Le classement change beaucoup quand on ne regarde que l'échéance la plus fiable :
+
+| Groupe | toutes échéances | à J+1 |
+|---|---|---|
+| charge résiduelle | +0,055, **pire saison −0,094** | +0,164, **pire saison +0,024** |
+| hiver restant | +0,078, instable | +0,181, **porteur** |
+| météo brute | +0,060, instable | +0,111, indistinct |
+
+**La charge résiduelle passe d'instable à solidement porteuse.** C'est cohérent : à
+J+1 la prévision de consommation est juste, à J+10 c'est du bruit. La même colonne
+n'a pas la même valeur selon l'échéance — et le modèle unique les traite pourtant
+toutes pareil. Piste sérieuse, non explorée.
+
 ## Pistes non explorées
-- **La prévision RTE J+1 n'a jamais été mesurée équitablement** : elle n'existe qu'à
-  une échéance sur dix, donc permuter sa colonne ne touche que 10 % des lignes. Il
-  faudrait la mesurer à J+1 seulement.
 - **Le seuil d'alerte n'a pas été recalé** depuis la contrainte de quota, ni sur la
   courbe en euros (`analyse_euros.py`).
 - **Le tableau des seuils du README est périmé** : produit quand `analyse_seuils.py`
   n'appelait pas `fit_demand_model`, donc avec toutes les colonnes de charge
   résiduelle à NaN.
+- **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
+  résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
+  pareil. `horizon` est bien une colonne, mais un arbre doit alors dépenser sa capacité
+  à réapprendre cette interaction partout.
 
 ---
 

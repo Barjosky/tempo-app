@@ -7,6 +7,18 @@ ROOT = Path(__file__).parent
 # l'export, qui repart d'un dossier vide, effacerait la base.
 DATA_DIR = ROOT / "store"
 REPORTS_DIR = ROOT / "reports"
+
+
+def reports_path(nom):
+    """Chemin dans reports/, le dossier etant cree au passage.
+
+    `reports/` n'est pas versionne (seul son contenu l'est, et il est ignore), donc il
+    n'existe pas sur un runner neuf. `np.savez` ne cree pas le dossier parent : un
+    script pouvait calculer vingt minutes puis echouer sur sa derniere ligne. Passer
+    par ici rend l'oubli impossible plutot que rare.
+    """
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    return REPORTS_DIR / nom
 DB_PATH = DATA_DIR / "tempo.db"
 
 # Codes couleur tels que renvoyes par api-couleur-tempo.fr

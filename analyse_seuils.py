@@ -106,7 +106,7 @@ def per_season(data, threshold):
 
 
 def main():
-    path = config.REPORTS_DIR / "probs_par_saison.npz"
+    path = config.reports_path("probs_par_saison.npz")
     perime, raison = cache_perime(path)
     if "--refit" in sys.argv or perime:
         if perime and "--refit" not in sys.argv:

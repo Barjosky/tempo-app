@@ -79,9 +79,8 @@ def simule(data, seuil, horizon, kwh, gene):
 def main():
     kwh = _arg("--kwh", KWH_DEFAUT)
     gene_demandee = _arg("--gene", None) if "--gene" in sys.argv else None
-    path = config.REPORTS_DIR / "probs_par_saison.npz"
+    path = config.reports_path("probs_par_saison.npz")
     if "--refit" in sys.argv or not path.exists():
-        config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         print("Rejeu des saisons :")
         compute_probs(path)
     data = np.load(path)

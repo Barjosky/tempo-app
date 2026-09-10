@@ -417,3 +417,25 @@ def test_un_cache_de_probabilites_perime_est_detecte():
         # Un cache d'avant ce controle n'a pas de signature : perime lui aussi.
         np.savez(chemin, autre=np.array([1.0]))
         assert analyse_seuils.cache_perime(chemin)[0]
+
+
+def test_le_dossier_des_rapports_se_cree_tout_seul():
+    """`reports/` n'existe pas sur un runner neuf, et numpy ne le cree pas.
+
+    Un script a calcule cinq saisons -- six minutes -- avant d'echouer sur son
+    `np.savez` final, faute de dossier parent. Deux scripts ecrivaient au meme endroit,
+    l'un creant le dossier et l'autre non ; c'est celui qui ne le creait pas qui
+    tournait en premier. Passer par `config.reports_path` rend l'oubli impossible.
+    """
+    ancien = config.REPORTS_DIR
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            config.REPORTS_DIR = Path(tmp) / "absent" / "reports"
+            assert not config.REPORTS_DIR.exists()
+            chemin = config.reports_path("essai.npz")
+            assert chemin.parent.is_dir(), "le dossier aurait du etre cree"
+            # Et l'ecriture reelle doit passer, pas seulement le mkdir.
+            np.savez(chemin, x=np.array([1.0]))
+            assert chemin.exists()
+        finally:
+            config.REPORTS_DIR = ancien
