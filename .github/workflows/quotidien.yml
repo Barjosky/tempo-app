@@ -21,6 +21,10 @@ on:
         description: "Mesurer l'apport de chaque feature (tres long)"
         type: boolean
         default: false
+      selection:
+        description: "Comparer les configurations de modele (tres long)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -94,6 +98,13 @@ jobs:
       - name: Mesurer l'apport de chaque feature
         if: inputs.diagnostic == true
         run: python diagnostic_features.py --reps 5
+
+      # Purement informatif lui aussi : la conclusion se lit dans les logs et se
+      # reporte a la main dans config.py, plutot que de laisser un script decider
+      # seul d'un reglage sur quatre saisons.
+      - name: Comparer les configurations de modele
+        if: inputs.selection == true
+        run: python selection_modele.py
 
       - name: Figer les donnees du site
         run: python export_static.py

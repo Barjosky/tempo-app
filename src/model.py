@@ -74,30 +74,51 @@ class TempoModel:
     # plusieurs saisons de validation, s'effondrait au plancher (0.05) et noyait la
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
     def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
-                 blanc_threshold=None):
+                 blanc_threshold=None, excluded=None, winter_weight=None,
+                 n_seeds=None):
         self.seed = seed
+        self.excluded = config.EXCLUDED_FEATURES if excluded is None else excluded
+        self.winter_weight = (config.WINTER_WEIGHT if winter_weight is None
+                              else winter_weight)
+        self.n_seeds = config.N_SEEDS if n_seeds is None else n_seeds
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
         self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
                                 else blanc_threshold)
-        self.clf = None
+        self.clf = None       # liste de modeles, moyennee a la prediction
         self.dead_columns = None
 
-    def _base(self):
+    def _base(self, seed):
         return HistGradientBoostingClassifier(
             max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
             min_samples_leaf=40, l2_regularization=1.0,
             class_weight=self.class_weight,
-            early_stopping=False, random_state=self.seed,
+            early_stopping=False, random_state=seed,
         )
 
-    def _fit_calibrated(self, X, y, meta):
+    def _poids(self, meta):
+        """Poids d'entrainement : les journees sans enjeu comptent moins.
+
+        D'avril a octobre, les week-ends et les feries, la reponse est Bleu et le
+        modele n'a rien a apprendre. Ces lignes sont pourtant les quatre cinquiemes
+        du jeu : sans ce reequilibrage, elles dominent la fonction de cout et le
+        modele s'optimise surtout la ou rien ne se joue.
+        """
+        if self.winter_weight == 1.0:
+            return None
+        return np.where(
+            [rules.rouge_possible(m["target"], m["is_holiday"]) for m in meta],
+            self.winter_weight, 1.0)
+
+    def _fit_calibrated(self, X, y, meta, seed):
         groups = np.array([m["target"].toordinal() for m in meta])
         n_groups = len(set(groups.tolist()))
         splits = list(GroupKFold(n_splits=min(4, max(2, n_groups))).split(X, y, groups))
-        clf = CalibratedClassifierCV(self._base(), method="isotonic", cv=splits)
-        clf.fit(X, y)
+        clf = CalibratedClassifierCV(self._base(seed), method="isotonic", cv=splits)
+        # Le poids sert a l'arbre ET a l'isotonic : la calibration se cale donc sur
+        # le regime hivernal, celui dont on lit les probabilites.
+        clf.fit(X, y, sample_weight=self._poids(meta))
         return clf
 
     def _neutralise(self, X):
@@ -114,12 +135,15 @@ class TempoModel:
         """
         X = np.asarray(X, dtype=float)
         if self.dead_columns is None:
-            self.dead_columns = np.isnan(X).all(axis=0)
+            exclues = np.array([n in self.excluded for n in features.FEATURE_NAMES])
+            if len(exclues) != X.shape[1]:
+                exclues = np.zeros(X.shape[1], dtype=bool)
+            self.dead_columns = np.isnan(X).all(axis=0) | exclues
             vides = [features.FEATURE_NAMES[i]
                      for i, mort in enumerate(self.dead_columns)
                      if mort and i < len(features.FEATURE_NAMES)]
             if vides:
-                print(f"  features sans donnees, neutralisees : {', '.join(vides)}")
+                print(f"  features neutralisees : {', '.join(vides)}")
         if self.dead_columns.any():
             X = X.copy()
             X[:, self.dead_columns] = 0.0
@@ -127,14 +151,23 @@ class TempoModel:
 
     def fit(self, X, y, meta):
         self.dead_columns = None
-        self.clf = self._fit_calibrated(self._neutralise(X), np.array(y), meta)
+        Xn = self._neutralise(X)
+        y = np.array(y)
+        # Plusieurs modeles ne differant que par leur graine. Un seul arbre boostee
+        # depend du hasard de ses coupures, et c'est ce hasard qui fait qu'un hiver
+        # passe et que le suivant casse ; la moyenne l'attenue.
+        self.clf = [self._fit_calibrated(Xn, y, meta, self.seed + k)
+                    for k in range(max(1, self.n_seeds))]
         return self
 
     def predict_proba(self, X, meta):
-        raw = self.clf.predict_proba(self._neutralise(X))
+        Xn = self._neutralise(X)
         ordered = np.zeros((len(X), 3))
-        for i, cls in enumerate(self.clf.classes_):
-            ordered[:, CLASSES.index(int(cls))] = raw[:, i]
+        for clf in self.clf:
+            raw = clf.predict_proba(Xn)
+            for i, cls in enumerate(clf.classes_):
+                ordered[:, CLASSES.index(int(cls))] += raw[:, i]
+        ordered /= len(self.clf)
         return constrain(ordered, meta)
 
 

@@ -111,18 +111,26 @@ def test_une_source_absente_n_empeche_pas_d_entrainer():
         s, date(2021, 9, 1), date(2023, 8, 31), horizons=range(1, 4))
     assert len(X) > 100
 
-    # On vide integralement trois colonnes, comme si leur source manquait.
-    morts = [features.FEATURE_NAMES.index(n)
-             for n in ("nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw")]
+    # On vide integralement trois colonnes, comme si leur source manquait. Elles
+    # sont choisies HORS de config.EXCLUDED_FEATURES : sur des colonnes deja
+    # neutralisees par configuration, le test passerait meme si la detection des
+    # colonnes vides etait cassee.
+    cibles = ("wind_index", "solar_index", "net_load")
+    assert not set(cibles) & set(config.EXCLUDED_FEATURES), (
+        "ces features sont exclues par config : le test ne prouverait plus rien")
+    morts = [features.FEATURE_NAMES.index(n) for n in cibles]
     X = X.copy()
     X[:, morts] = np.nan
     assert np.isnan(X[:, morts]).all()
 
-    gbm = model.TempoModel().fit(X, y, meta)
+    # n_seeds=1 : ce test verifie la mecanique, pas la qualite. L'ensemble
+    # complet multiplierait par cinq un temps de test sans rien y ajouter.
+    gbm = model.TempoModel(n_seeds=1).fit(X, y, meta)
     probs = gbm.predict_proba(X[:5], meta[:5])
     assert probs.shape == (5, 3)
     assert np.allclose(probs.sum(axis=1), 1.0)
-    assert list(gbm.dead_columns.nonzero()[0]) == sorted(morts)
+    neutralisees = set(gbm.dead_columns.nonzero()[0])
+    assert set(morts) <= neutralisees, "les colonnes vides n'ont pas ete detectees"
 
 
 def test_les_periodes_sont_embiquees():

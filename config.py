@@ -69,6 +69,39 @@ SOLAR_WEIGHTS = {
 # Courbe de puissance d'eolienne (m/s) : demarrage, puissance nominale, coupure.
 WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 
+# ---------------------------------------------------------------------------
+# Reglages du modele, tous adosses a une mesure (voir diagnostic_features.py et
+# selection_modele.py). Le probleme a traiter n'est pas la precision moyenne mais
+# l'INSTABILITE : 69 % de reussite un hiver, 51 % le suivant, sur les seuls jours
+# ou le Rouge est possible. Un modele qu'on ne peut pas croire une annee sur trois
+# n'est pas fiable, quelle que soit sa moyenne.
+
+# Features neutralisees. La permutation les a mesurees nuisibles : le groupe
+# « offre (nucleaire) » est le pire des dix, negatif dans TOUTES les saisons
+# (-0,032 de log-loss en moyenne, -0,091 sur la pire). L'intuition etait bonne --
+# un jour Rouge naît d'une marge tendue -- mais la production nucleaire appelee est
+# un proxy trop grossier de la puissance disponible.
+# Elles sont neutralisees plutot que supprimees : la ligne de features garde sa
+# longueur, donc aucun risque de decalage entre les colonnes et leurs noms, et
+# revenir en arriere ne demande que de vider cette liste.
+EXCLUDED_FEATURES = [
+    "nuclear_recent_mw",
+    "nuclear_anomaly_mw",
+    "margin_proxy_mw",
+]
+
+# Poids des jours ou le Rouge est possible pendant l'entrainement. Sans lui, la
+# fonction de cout est dominee par les journees d'ete, ou la reponse est Bleu
+# d'avance : le modele optimise surtout ce qui ne se joue pas. Le poids concentre
+# l'apprentissage ET la calibration sur le regime hivernal, ce qui repond aussi a
+# la sur-confiance mesuree entre 40 et 70 % de probabilite annoncee.
+WINTER_WEIGHT = 5.0
+
+# Nombre de modeles moyennes. Chacun ne differe que par sa graine ; leur moyenne
+# reduit la part du hasard d'entrainement, qui est justement ce qui fait qu'une
+# saison passe et l'autre casse. C'est le levier le plus sur contre l'instabilite.
+N_SEEDS = 5
+
 # Periodes d'evaluation. Un taux de reussite calcule sur l'annee entiere est flatte
 # par les mois ou la reponse est connue d'avance : d'avril a octobre tout est Bleu.
 # Le seul chiffre qui dit quelque chose est celui mesure la ou le modele a un choix
