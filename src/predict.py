@@ -14,6 +14,14 @@ from src.sources import calendrier
 
 MODEL_PATH = config.DATA_DIR / "model.joblib"
 
+# Version du FORMAT du modele enregistre, a incrementer des que la structure interne
+# de TempoModel change. Les noms de features ne suffisent pas a s'en proteger : le
+# passage a une moyenne de plusieurs graines a transforme `clf` en liste sans toucher
+# a une seule feature, et un modele d'avant a fait planter la collecte en production
+# (« CalibratedClassifierCV object is not iterable »). Un depickle est un contrat, et
+# ce numero est le contrat.
+MODEL_FORMAT = 2
+
 
 def train(conn, store=None, class_weight=None, rouge_threshold=None):
     """Entraine sur tout l'historique etiquete disponible."""
@@ -24,7 +32,8 @@ def train(conn, store=None, class_weight=None, rouge_threshold=None):
     gbm = model.TempoModel(class_weight=class_weight,
                            rouge_threshold=rouge_threshold).fit(X, y, meta)
     version = f"v1-{date.today():%Y%m%d}-n{len(X)}"
-    joblib.dump({"model": gbm, "version": version, "features": features.FEATURE_NAMES}, MODEL_PATH)
+    joblib.dump({"model": gbm, "version": version, "format": MODEL_FORMAT,
+                 "features": features.FEATURE_NAMES}, MODEL_PATH)
     conn.execute(
         "INSERT OR REPLACE INTO model_runs (version, trained_at, metrics_json) VALUES (?,?,?)",
         (version, datetime.now().isoformat(timespec="seconds"),
@@ -43,9 +52,15 @@ def load(conn=None):
     if not MODEL_PATH.exists():
         raise FileNotFoundError("Modele absent : lancer `python collector.py --train`")
     bundle = joblib.load(MODEL_PATH)
-    # Un modele entraine avant l'ajout d'une feature attend un nombre de colonnes qui
-    # n'existe plus. Sans ce controle il predirait sur des colonnes decalees, en
-    # silence : mieux vaut refuser de servir que servir n'importe quoi.
+    # D'abord le format : un modele d'une version anterieure peut avoir la bonne liste
+    # de features et une structure interne incompatible.
+    if bundle.get("format") != MODEL_FORMAT:
+        raise ModeleObsolete(
+            f"modele au format {bundle.get('format', 'inconnu')}, le code attend le "
+            f"format {MODEL_FORMAT} -- relancer `python collector.py --train`")
+    # Puis les features : un modele entraine avant l'ajout d'une colonne attend un
+    # nombre de colonnes qui n'existe plus. Sans ce controle il predirait sur des
+    # colonnes decalees, en silence : mieux vaut refuser de servir que mal servir.
     connues = bundle.get("features")
     if connues != features.FEATURE_NAMES:
         manquantes = set(features.FEATURE_NAMES) - set(connues or [])

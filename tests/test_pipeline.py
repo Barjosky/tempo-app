@@ -133,6 +133,38 @@ def test_une_source_absente_n_empeche_pas_d_entrainer():
     assert set(morts) <= neutralisees, "les colonnes vides n'ont pas ete detectees"
 
 
+def test_un_modele_d_un_autre_format_est_refuse():
+    """Un depickle est un contrat : le rompre en silence coute une journee de production.
+
+    Vecu deux fois. La premiere, une feature ajoutee et un modele attendant l'ancien
+    nombre de colonnes. La seconde, la moyenne de plusieurs graines transformant un
+    attribut en liste, SANS toucher a une seule feature -- le controle des noms n'y
+    voyait rien et la collecte a plante sur « CalibratedClassifierCV object is not
+    iterable ». D'ou un numero de format, verifie avant tout le reste.
+    """
+    import joblib
+    from src import predict
+    ancien = predict.MODEL_PATH
+    try:
+        chemin = Path(tempfile.gettempdir()) / "tempo_test_modele.joblib"
+        predict.MODEL_PATH = chemin
+        joblib.dump({"model": None, "version": "v0", "features": features.FEATURE_NAMES,
+                     "format": predict.MODEL_FORMAT - 1}, chemin)
+        try:
+            predict.load()
+            raise AssertionError("un format perime a ete accepte")
+        except predict.ModeleObsolete as exc:
+            assert "format" in str(exc)
+        assert predict.besoin_d_entrainement() is True
+
+        # Et le format courant, lui, doit passer le controle de format.
+        joblib.dump({"model": None, "version": "v1", "features": features.FEATURE_NAMES,
+                     "format": predict.MODEL_FORMAT}, chemin)
+        assert predict.besoin_d_entrainement() is False
+    finally:
+        predict.MODEL_PATH = ancien
+
+
 def test_les_periodes_sont_embiquees():
     """« eligibles » est inclus dans « hiver », lui-meme inclus dans « tout »."""
     import app as web
