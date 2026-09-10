@@ -4,7 +4,9 @@ On interroge le serveur Flask via son client de test plutot que de reecrire les
 requetes SQL : la page statique sert donc exactement les memes donnees que la
 version locale, sans risque de divergence entre les deux implementations.
 """
+import hashlib
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +22,33 @@ PERIODS = list(config.PERIODS)
 # compense en montrant 200 lignes plutot que 400 : c'est un tableau de consultation,
 # et les statistiques -- elles -- sont calculees sur la totalite des predictions.
 HISTORY_LIMIT = 200
+
+
+# Un navigateur garde la feuille de style et le script en cache bien plus longtemps
+# que le HTML. Une mise en ligne peut donc servir la nouvelle page avec l'ancien
+# script -- et l'utilisateur voit une version melangee sans qu'aucun outil ne signale
+# quoi que ce soit. Suffixer chaque lien d'une empreinte du contenu change l'URL des
+# que le fichier change, ce qui force le rechargement, et seulement quand il le faut.
+ASSETS = ("styles.css", "app.js")
+
+
+def estampiller(racine=None):
+    """Reecrit index.html avec l'empreinte des assets. Rend True s'il a change."""
+    racine = racine or Path(__file__).parent
+    page = racine / "index.html"
+    html = page.read_text(encoding="utf-8")
+    avant = html
+    for nom in ASSETS:
+        fichier = racine / nom
+        if not fichier.exists():
+            continue
+        empreinte = hashlib.sha256(fichier.read_bytes()).hexdigest()[:8]
+        html = re.sub(rf'(["\'])({re.escape(nom)})(\?v=[0-9a-f]+)?\1',
+                      rf'\g<1>\g<2>?v={empreinte}\g<1>', html)
+    if html != avant:
+        page.write_text(html, encoding="utf-8")
+        return True
+    return False
 
 
 def dump(client, name, url):
@@ -67,6 +96,8 @@ def main():
 
     files = len(list(OUT.glob("*.json")))
     print(f"{files} fichiers ecrits dans {OUT} ({total / 1024:.0f} Ko)")
+    if estampiller():
+        print("index.html reestampille : le cache des navigateurs sera invalide")
 
 
 if __name__ == "__main__":

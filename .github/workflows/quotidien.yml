@@ -128,7 +128,9 @@ jobs:
         run: |
           git config user.name "tempo-bot"
           git config user.email "tempo-bot@users.noreply.github.com"
-          git add data
+          # index.html porte l'empreinte des assets : sans lui, un navigateur peut
+          # servir la nouvelle page avec l'ancien script, en silence.
+          git add data index.html
           if git diff --staged --quiet; then
             echo "Aucun changement a publier"
           else

@@ -289,3 +289,47 @@ def test_la_fiabilite_compte_ce_qu_elle_annonce():
     assert basse["observed"] == 0.0 and haute["observed"] == 1.0
     assert abs(basse["predicted"] - 0.05) < 1e-9
     assert abs(haute["predicted"] - 0.85) < 1e-9
+
+
+def test_l_empreinte_des_assets_suit_leur_contenu():
+    """Un asset modifie doit changer l'URL, sinon le navigateur sert l'ancien.
+
+    C'est le defaut qui a fait croire que la mise en ligne n'avait pas eu lieu : le
+    serveur publiait la nouvelle page, le navigateur gardait l'ancien script. La page
+    servie etait alors un melange des deux, sans qu'aucun outil ne le signale.
+    """
+    import re
+    import shutil
+    import tempfile
+    import export_static
+
+    racine = Path(__file__).parent.parent
+    with tempfile.TemporaryDirectory() as tmp:
+        faux = Path(tmp)
+        for nom in ("index.html",) + export_static.ASSETS:
+            shutil.copy(racine / nom, faux / nom)
+
+        # Le fichier du depot est deja estampille : on repart de l'etat vierge, sans
+        # quoi le test mesurerait l'estampille d'hier au lieu du mecanisme.
+        vierge = re.sub(r"\?v=[0-9a-f]+", "",
+                        (faux / "index.html").read_text(encoding="utf-8"))
+        (faux / "index.html").write_text(vierge, encoding="utf-8")
+        for nom in export_static.ASSETS:
+            assert f'{nom}"' in vierge or f"{nom}'" in vierge, (
+                f"index.html ne reference pas {nom} : le test ne prouverait rien")
+
+        assert export_static.estampiller(faux), "premier passage : rien estampille"
+        premier = (faux / "index.html").read_text(encoding="utf-8")
+        for nom in export_static.ASSETS:
+            assert f'{nom}?v=' in premier, f"{nom} n'est pas estampille"
+
+        # Idempotent : a contenu egal, aucune reecriture, donc aucun commit inutile.
+        assert not export_static.estampiller(faux), "reestampille sans changement"
+
+        # Et le contenu change doit changer l'empreinte -- c'est tout l'interet.
+        (faux / "app.js").write_text("// autre chose", encoding="utf-8")
+        assert export_static.estampiller(faux)
+        apres = (faux / "index.html").read_text(encoding="utf-8")
+        assert apres != premier, "l'empreinte n'a pas suivi le contenu"
+        # Une seule empreinte par asset : pas d'accumulation de ?v= a chaque passage.
+        assert apres.count("app.js?v=") == 1 and apres.count("?v=") == 2
