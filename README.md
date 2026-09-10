@@ -308,6 +308,13 @@ filtre qui ne filtre pas.
 Ces contraintes sont appliquées **après** le modèle : une couleur impossible voit sa
 probabilité mise à zéro, le reste est renormalisé.
 
+## Historique des mesures
+
+`JOURNAL.md` garde la trace de ce qui a été mesuré, retenu et **écarté** — avec les
+chiffres. `config.py` dit ce que le modèle fait ; le journal dit pourquoi, et ce qui
+avait été essayé avant. Sans lui, une piste déjà mesurée sans succès se represente tôt
+ou tard comme une bonne idée neuve.
+
 ## Structure
 
 ```
