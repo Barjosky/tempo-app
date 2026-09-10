@@ -23,13 +23,33 @@ def _mask_matrix(meta):
     ], dtype=float)
 
 
-def constrain(probs, meta):
-    """Annule les couleurs impossibles et renormalise."""
+def constrain(probs, meta, force_quota=None):
+    """Annule les couleurs impossibles, renormalise, puis impose les Rouge forces.
+
+    Le masque enleve ce que le contrat interdit. La contrainte de quota fait
+    l'inverse : elle impose ce que le contrat oblige. Quand il ne reste pas plus de
+    jours eligibles que de Rouge a placer, tous ces jours SONT Rouge -- ce n'est pas
+    une prevision mais une consequence, et la laisser apprendre au modele serait lui
+    demander d'extrapoler un regime qu'il n'a presque jamais vu.
+    """
     masked = probs * _mask_matrix(meta)
     total = masked.sum(axis=1, keepdims=True)
     fallback = np.zeros_like(masked)
     fallback[:, 0] = 1.0
-    return np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
+    out = np.where(total > 0, masked / np.where(total > 0, total, 1), fallback)
+
+    if force_quota is None:
+        force_quota = config.FORCE_QUOTA_ROUGE
+    if not force_quota:
+        return out
+    forces = np.array([rules.rouge_force(m["target"], m.get("rouge_left"))
+                       for m in meta])
+    if forces.any():
+        # Le masque a pu interdire le Rouge (dimanche, ferie) : on n'impose que la
+        # ou il reste possible, sinon on contredirait une regle plus forte.
+        forces &= out[:, 2] > 0
+        out[forces] = [0.0, 0.0, 1.0]
+    return out
 
 
 class ClimatologyBaseline:
@@ -73,43 +93,156 @@ class TempoModel:
     # pas une valeur auto-calee : le calage automatique, teste sur une puis sur
     # plusieurs saisons de validation, s'effondrait au plancher (0.05) et noyait la
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
-    def __init__(self, seed=0, class_weight=None, rouge_threshold=None):
+    def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
+                 blanc_threshold=None, excluded=None, winter_weight=None,
+                 n_seeds=None, force_quota=None, two_stage=None):
         self.seed = seed
+        self.excluded = config.EXCLUDED_FEATURES if excluded is None else excluded
+        self.winter_weight = (config.WINTER_WEIGHT if winter_weight is None
+                              else winter_weight)
+        self.n_seeds = config.N_SEEDS if n_seeds is None else n_seeds
+        self.force_quota = (config.FORCE_QUOTA_ROUGE if force_quota is None
+                            else force_quota)
+        self.two_stage = config.TWO_STAGE if two_stage is None else two_stage
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
-        self.clf = None
+        self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
+                                else blanc_threshold)
+        self.clf = None       # liste de modeles, moyennee a la prediction
+        self.clf_tendu = None  # second etage : Blanc contre Rouge
+        self.dead_columns = None
 
-    def _base(self):
+    def _base(self, seed):
         return HistGradientBoostingClassifier(
             max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
             min_samples_leaf=40, l2_regularization=1.0,
             class_weight=self.class_weight,
-            early_stopping=False, random_state=self.seed,
+            # Sans tirage sur les colonnes, changer de graine ne change rien : avec
+            # early_stopping desactive et un jeu plus petit que le seuil de
+            # sous-echantillonnage du binning, l'algorithme est deterministe. Le
+            # tirage n'est donc introduit que quand on moyenne plusieurs modeles.
+            max_features=1.0 if self.n_seeds <= 1 else 0.85,
+            early_stopping=False, random_state=seed,
         )
 
-    def _fit_calibrated(self, X, y, meta):
+    def _poids(self, meta):
+        """Poids d'entrainement : les journees sans enjeu comptent moins.
+
+        D'avril a octobre, les week-ends et les feries, la reponse est Bleu et le
+        modele n'a rien a apprendre. Ces lignes sont pourtant les quatre cinquiemes
+        du jeu : sans ce reequilibrage, elles dominent la fonction de cout et le
+        modele s'optimise surtout la ou rien ne se joue.
+        """
+        if self.winter_weight == 1.0:
+            return None
+        return np.where(
+            [rules.rouge_possible(m["target"], m["is_holiday"]) for m in meta],
+            self.winter_weight, 1.0)
+
+    def _fit_calibrated(self, X, y, meta, seed):
         groups = np.array([m["target"].toordinal() for m in meta])
         n_groups = len(set(groups.tolist()))
         splits = list(GroupKFold(n_splits=min(4, max(2, n_groups))).split(X, y, groups))
-        clf = CalibratedClassifierCV(self._base(), method="isotonic", cv=splits)
-        clf.fit(X, y)
+        clf = CalibratedClassifierCV(self._base(seed), method="isotonic", cv=splits)
+        # Le poids sert a l'arbre ET a l'isotonic : la calibration se cale donc sur
+        # le regime hivernal, celui dont on lit les probabilites.
+        clf.fit(X, y, sample_weight=self._poids(meta))
         return clf
 
+    def _neutralise(self, X):
+        """Neutralise les colonnes entierement vides.
+
+        Une feature dont la source n'a pas encore ete collectee sort NaN sur toutes
+        les lignes. Le GBM sait pourtant traiter des NaN epars -- mais son binning
+        echoue sur une colonne INTEGRALEMENT vide (« window shape cannot be larger
+        than input array shape »), au lieu de l'ignorer. On y met une constante : un
+        arbre n'y trouve aucune coupure, la feature est donc sans effet, et le modele
+        reste entrainable avec une source de donnees absente plutot que de refuser de
+        demarrer. Les colonnes neutralisees sont figees a l'entrainement, sinon la
+        prediction sur une seule ligne en declarerait d'autres au hasard des NaN.
+        """
+        X = np.asarray(X, dtype=float)
+        if self.dead_columns is None:
+            exclues = np.array([n in self.excluded for n in features.FEATURE_NAMES])
+            if len(exclues) != X.shape[1]:
+                exclues = np.zeros(X.shape[1], dtype=bool)
+            self.dead_columns = np.isnan(X).all(axis=0) | exclues
+            vides = [features.FEATURE_NAMES[i]
+                     for i, mort in enumerate(self.dead_columns)
+                     if mort and i < len(features.FEATURE_NAMES)]
+            if vides:
+                print(f"  features neutralisees : {', '.join(vides)}")
+        if self.dead_columns.any():
+            X = X.copy()
+            X[:, self.dead_columns] = 0.0
+        return X
+
     def fit(self, X, y, meta):
-        self.clf = self._fit_calibrated(X, np.array(y), meta)
+        self.dead_columns = None
+        Xn = self._neutralise(X)
+        y = np.array(y)
+        # Plusieurs modeles ne differant que par leur graine. Un seul arbre boostee
+        # depend du hasard de ses coupures, et c'est ce hasard qui fait qu'un hiver
+        # passe et que le suivant casse ; la moyenne l'attenue.
+        self.clf = [self._fit_calibrated(Xn, y, meta, self.seed + k)
+                    for k in range(max(1, self.n_seeds))]
+
+        if self.two_stage:
+            # Second etage : Blanc ou Rouge, entraine sur les SEULS jours tendus.
+            #
+            # Le modele a trois classes est ecrase par les Bleu, qui font 82 % des
+            # exemples : il apprend surtout a les reconnaitre, et l'arbitrage entre
+            # Blanc et Rouge -- qui ne se joue que sur un jour sur sept -- ne pese
+            # presque rien dans sa fonction de cout. C'est pourtant la que tout
+            # echoue : 220 jours Blanc annonces Rouge, et 71 % des fausses alertes
+            # tombant sur du Blanc.
+            #
+            # Isole, ce second etage voit un probleme equilibre (43 Blanc contre 22
+            # Rouge) et peut consacrer toute sa capacite a cette frontiere-la.
+            tendu = y != config.BLEU
+            if tendu.sum() >= 100 and len(set(y[tendu].tolist())) == 2:
+                mt = [m for m, k in zip(meta, tendu) if k]
+                self.clf_tendu = [
+                    self._fit_calibrated(Xn[tendu], y[tendu], mt, self.seed + 100 + k)
+                    for k in range(max(1, self.n_seeds))]
         return self
 
+    def _moyenne(self, modeles, Xn, colonnes):
+        """Probabilites moyennees sur les modeles, remises dans l'ordre des couleurs."""
+        out = np.zeros((len(Xn), len(colonnes)))
+        for clf in modeles:
+            raw = clf.predict_proba(Xn)
+            for i, cls in enumerate(clf.classes_):
+                out[:, colonnes.index(int(cls))] += raw[:, i]
+        return out / len(modeles)
+
     def predict_proba(self, X, meta):
-        raw = self.clf.predict_proba(X)
-        ordered = np.zeros((len(X), 3))
-        for i, cls in enumerate(self.clf.classes_):
-            ordered[:, CLASSES.index(int(cls))] = raw[:, i]
-        return constrain(ordered, meta)
+        Xn = self._neutralise(X)
+        ordered = self._moyenne(self.clf, Xn, CLASSES)
+
+        if self.clf_tendu:
+            # La masse « pas Bleu » vient du premier etage, sa repartition du second.
+            # Le premier reste donc juge de « tendu ou non », le second de la couleur,
+            # et les probabilites continuent de sommer a un.
+            tendu = ordered[:, 1] + ordered[:, 2]
+            part = self._moyenne(self.clf_tendu, Xn, [config.BLANC, config.ROUGE])
+            ordered[:, 1] = tendu * part[:, 0]
+            ordered[:, 2] = tendu * part[:, 1]
+        return constrain(ordered, meta, self.force_quota)
 
 
-def decide(probs, rouge_threshold):
-    """Couleur retenue : argmax, mais un Rouge probable prime (rater un Rouge coute cher)."""
+def decide(probs, rouge_threshold, blanc_threshold=None):
+    """Couleur retenue : argmax, corrige par deux seuils.
+
+    L'argmax seul est structurellement aveugle aux classes rares : le Blanc pese ~12 %
+    des jours contre 82 % de Bleu, il ne l'emporte donc presque jamais meme quand il
+    est le pari le plus interessant. Chaque seuil promeut sa couleur des qu'elle est
+    assez probable, le Rouge en dernier car c'est lui qui coute le plus cher a rater.
+    """
+    blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
+                       else blanc_threshold)
     colors = np.array(CLASSES)[probs.argmax(axis=1)]
+    colors[probs[:, 1] >= blanc_threshold] = config.BLANC
     colors[probs[:, 2] >= rouge_threshold] = config.ROUGE
     return colors

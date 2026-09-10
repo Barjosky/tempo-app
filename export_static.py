@@ -15,6 +15,11 @@ from app import app
 
 OUT = config.SITE_DIR / "data"
 SOURCES = ["all", "live", "backtest"]
+PERIODS = list(config.PERIODS)
+# Le tableau est croise avec les periodes, donc son nombre de fichiers triple. On
+# compense en montrant 200 lignes plutot que 400 : c'est un tableau de consultation,
+# et les statistiques -- elles -- sont calculees sur la totalite des predictions.
+HISTORY_LIMIT = 200
 
 
 def dump(client, name, url):
@@ -36,14 +41,20 @@ def main():
     with app.test_client() as client:
         total += dump(client, "forecast", "/api/forecast")
         for source in SOURCES:
-            total += dump(client, f"history_{source}",
-                          f"/api/history?source={source}&limit=400")
-            total += dump(client, f"accuracy_{source}", f"/api/accuracy?source={source}")
-            for h in range(1, config.MAX_HORIZON + 1):
-                total += dump(client, f"history_{source}_h{h}",
-                              f"/api/history?source={source}&horizon={h}&limit=400")
-                total += dump(client, f"accuracy_{source}_h{h}",
-                              f"/api/accuracy?source={source}&horizon={h}")
+            # Tout est filtre par le serveur, y compris le tableau : la troncature du
+            # tableau s'applique APRES le filtre. Le filtrer dans la page donnerait un
+            # tableau vide en mode hiver, les lignes les plus recentes etant estivales.
+            for period in PERIODS:
+                suffix = "" if period == "all" else f"_{period}"
+                base = f"source={source}&period={period}"
+                total += dump(client, f"history_{source}{suffix}",
+                              f"/api/history?{base}&limit={HISTORY_LIMIT}")
+                total += dump(client, f"accuracy_{source}{suffix}", f"/api/accuracy?{base}")
+                for h in range(1, config.MAX_HORIZON + 1):
+                    total += dump(client, f"history_{source}{suffix}_h{h}",
+                                  f"/api/history?{base}&horizon={h}&limit={HISTORY_LIMIT}")
+                    total += dump(client, f"accuracy_{source}{suffix}_h{h}",
+                                  f"/api/accuracy?{base}&horizon={h}")
         try:
             total += dump(client, "backtest", "/api/backtest")
         except SystemExit:
@@ -51,6 +62,7 @@ def main():
 
     (OUT / "meta.json").write_text(json.dumps({
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "periods": config.PERIODS,
     }), encoding="utf-8")
 
     files = len(list(OUT.glob("*.json")))

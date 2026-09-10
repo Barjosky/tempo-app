@@ -107,14 +107,166 @@ Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré s
 | 0,30 | 76 % | 11 | 66 % |
 | 0,50 | 61 % | 5 | 75 % |
 
-Réglable dans `config.ROUGE_ALERT_THRESHOLD`. Pour revoir le tableau complet avant de
-changer : `python analyse_seuils.py` (instantané, relit des probabilités mises en cache ;
+Réglable dans `config.ROUGE_ALERT_THRESHOLD`. **Ce tableau est à refaire** : il a été
+produit alors qu'`analyse_seuils.py` n'appelait pas `fit_demand_model`, et toutes les
+colonnes de charge résiduelle y sortaient donc vides. Le script est corrigé, les chiffres
+ci-dessus datent d'avant. Pour le régénérer : `python analyse_seuils.py` (instantané, relit des probabilités mises en cache ;
 `--refit` pour les recalculer).
 
 Un calage automatique de ce seuil a été essayé — sur une saison de validation, puis sur
 plusieurs mises en commun. Les deux fois il s'effondrait au plancher et noyait la page sous
 les fausses alertes : le coût d'une fausse alerte n'est pas mesurable par le modèle, il
 n'appartient qu'à l'utilisateur. D'où un réglage explicite.
+
+## Quel pourcentage, sur quel dénominateur ?
+
+Un taux de réussite calculé sur l'année entière ne veut pas dire grand-chose : d'avril à
+octobre la réponse est Bleu d'avance, et ces mois-là gonflent le score sans que le modèle
+ait rien risqué. L'onglet Historique propose donc trois dénominateurs, et l'écart entre
+eux est l'information :
+
+| Période | Prédictions | Réussite | Ce qu'elle contient |
+|---|---|---|---|
+| Toute l'année | 14 610 | 88,6 % | flatteur — inclut les mois sans enjeu |
+| Novembre → mars | 6 050 | 76,7 % | la fenêtre où un Rouge est possible |
+| **Jours éligibles** | **4 190** | **69,3 %** | lundi-vendredi, nov-mars, hors fériés |
+
+Presque 20 points d'écart entre le premier chiffre et le dernier. C'est sur le dernier que
+le modèle a réellement un choix à faire.
+
+Ce dénominateur corrige aussi une lecture erronée. La précision paraissait *plate* d'une
+échéance à l'autre — 90,0 % à J+1 contre 88,0 % à J+10 — ce qui laissait croire que le
+modèle n'exploitait pas la précision des prévisions courtes. Sur les jours éligibles la
+pente apparaît : **73,3 % à J+1 contre 67,1 % à J+10**, soit trois fois plus. La platitude
+venait pour l'essentiel du dénominateur, pas du modèle. Le rappel Rouge, lui, reste bien
+plat (73 % à J+1, 74 % à J+10) : cette part de l'anomalie tient toujours.
+
+## Ce que ça rapporte, en euros
+
+```bash
+python analyse_euros.py --kwh 8 --gene 1.00
+```
+
+Le seuil d'alerte se réglait jusqu'ici à l'aveugle, faute de pouvoir chiffrer une fausse
+alerte. La moitié du problème est pourtant chiffrable : décaler un kWh d'heure pleine
+vers l'heure creuse un jour Rouge vaut **0,568 €**. Ce qui ne l'est pas, c'est la *gêne*
+de s'être organisé pour rien — alors on ne l'invente pas, on balaye sa valeur et on
+regarde comment le seuil optimal se déplace avec elle.
+
+Le script compare aussi trois stratégies à rendement égal : tout décaler tous les jours,
+suivre le modèle, ou disposer d'un oracle. Ce qui compte n'est pas le total en euros
+(tout décaler gagne toujours le plus, au prix d'une année entière de contrainte) mais ce
+que rapporte **chaque jour de contrainte consenti**.
+
+## Fiabilité des probabilités
+
+L'onglet Historique compare désormais, tranche par tranche, la probabilité de Rouge
+annoncée à la fréquence réellement observée. Le constat, sur les jours éligibles :
+
+- **en dessous de 30 %, le modèle est trop prudent** — il annonce 15 %, il tombe 21 % ;
+  il annonce 25 %, il tombe 33 % ;
+- **entre 40 et 70 %, il est trop sûr de lui** — il annonce 55 %, il tombe 40 % ; il
+  annonce 65 %, il tombe 48 %.
+
+Ces écarts de 15 points passent tout juste le critère de viabilité (< 20 points). Ils
+n'étaient visibles nulle part avant.
+
+## L'hiver 2025-2026, ou pourquoi une fin de saison n'est pas météorologique
+
+Sur les jours où le Rouge est possible, le modèle faisait 66,8 % de réussite en
+2024-2025 et **51,4 %** en 2025-2026. La cause n'a rien à voir avec le temps qu'il a
+fait.
+
+| Saison | Déc | Jan | Fév | Mars | Marge minimale | Jours **forcés** |
+|---|---|---|---|---|---|---|
+| 2023-2024 | — | — | — | — | 0 le 29/03 | 1 |
+| 2024-2025 | 8 | 13 | 1 | 0 | 1 le 31/03 | 0 |
+| **2025-2026** | 2 | 6 | 1 | **13** | **0 le 13/03** | **13** |
+
+EDF est entré dans mars 2026 avec treize Rouge non consommés. Le 13 mars, il restait
+exactement treize jours éligibles pour treize Rouge à placer : **à partir de cette
+date, chaque jour restant était Rouge par arithmétique**, quelle que soit la météo.
+Le modèle, lui, annonçait Bleu — entraîné sur des hivers soldés dès février, il
+n'avait jamais rencontré une fin de saison sous cette contrainte.
+
+`rouge_pressure` portait pourtant l'information, et c'est même la seule feature
+individuellement porteuse des soixante. Mais un arbre ne sait pas extrapoler : au-delà
+de la dernière valeur rencontrée à l'entraînement, il rend toujours la même feuille.
+
+D'où le choix d'en faire une **règle plutôt qu'un apprentissage**. Quand la marge de
+placement tombe à zéro, `constrain()` impose le Rouge, comme le masque contractuel
+interdit déjà le Rouge un dimanche. Le contrat n'est pas qu'une liste d'interdits : il
+oblige aussi. Mesuré, cela fait passer 2025-2026 de 1,085 à 0,900 de log-loss et le
+rappel Rouge de 72 % à 82 %.
+
+Deux détails qui comptent : le masque garde la priorité, donc un dimanche reste Bleu
+même sous quota tendu ; et donner la marge au modèle comme simple *feature* ne suffit
+pas — mesurée seule, elle ne relève pas le plancher. C'est la contrainte qui paie.
+
+## Ce que chaque groupe de features apporte réellement
+
+Mesuré par permutation sur trois saisons, jours éligibles uniquement. La colonne qui
+tranche est la **pire saison** : un groupe qui aide en moyenne mais nuit à un hiver
+n'est pas fiable, il est chanceux.
+
+| Groupe | +log-loss | bruit | pire saison | Verdict |
+|---|---|---|---|---|
+| **quotas** | **+0,120** | 0,025 | **+0,016** | **porteur** |
+| hiver restant | +0,078 | 0,017 | −0,015 | instable |
+| météo brute | +0,060 | 0,026 | −0,076 | instable |
+| charge résiduelle | +0,055 | 0,016 | −0,094 | instable |
+| renouvelables | +0,021 | 0,020 | −0,016 | indistinct |
+| horizon · RTE J+1 · froid relatif · calendrier | ≈ 0 | — | — | indistinct |
+| **offre (nucléaire)** | **−0,032** | 0,017 | −0,091 | **nuit au modèle** |
+
+**Un seul groupe est solidement porteur : les quotas.** Le modèle roule sur l'état de la
+saison — combien de Rouge restent, depuis quand, sous quelle pression — bien plus que sur
+la météo. `rouge_pressure` est d'ailleurs la seule feature individuelle porteuse sur les
+soixante (+0,080, positive dans les trois saisons).
+
+Ce que ça dit des trois signaux ajoutés :
+
+- **la disponibilité nucléaire nuit** : pire groupe des dix, négatif partout. L'idée était
+  bonne — un jour Rouge naît d'une marge tendue — mais la production appelée est un proxy
+  trop grossier de la puissance disponible.
+- **l'hiver restant est le plus prometteur** des trois (2ᵉ groupe), sans être fiable :
+  il abîme une saison sur trois.
+- **la prévision RTE J+1 ressort à zéro, mais la mesure est injuste** : cette feature
+  n'existe qu'à une échéance sur dix, donc permuter sa colonne ne touche que 10 % des
+  lignes. Il faudrait la mesurer à J+1 seulement pour conclure.
+
+Les composantes de la météo se masquent entre elles : le groupe aide, mais `hdd_f`,
+`temp_anomaly` et `hdd_rank_window` sont individuellement du poids mort — elles encodent
+toutes la même température. C'est le piège de la mesure feature par feature, et la raison
+pour laquelle le tableau par groupe passe en premier.
+
+Les signaux en question :
+
+- **Le côté offre.** Tout le reste décrit la demande, alors qu'un jour Rouge naît d'une
+  *marge* tendue. La puissance nucléaire récemment appelée (`nucleaire` d'éCO2mix, donc
+  toujours sans clé) et son écart au niveau habituel du mois donnent enfin une idée de ce
+  que le parc peut fournir — ce que le froid seul n'explique pas.
+- **La prévision de consommation de RTE**, déjà collectée mais jamais lue. Elle n'existe
+  qu'à J+1 et reste NaN au-delà : la propager donnerait au backtest une information que
+  la production n'aura jamais.
+- **L'hiver restant.** Les features comparaient le jour à la saison *écoulée* ; celle-ci
+  le compare à ce qu'il *reste*, estimé sur les seules saisons antérieures. C'est
+  l'arbitrage qu'EDF fait — ce jour froid mérite-t-il un Rouge, ou en reste-t-il assez de
+  plus froids pour dépenser le quota plus tard ?
+
+Pour savoir ce que chaque feature apporte réellement :
+
+```bash
+python diagnostic_features.py            # par groupe, puis une par une
+python diagnostic_features.py --groupes  # groupes seulement, rapide
+```
+
+La méthode est la permutation : on détruit une colonne du jeu de test en la mélangeant,
+et on mesure ce que le modèle perd. Trois colonnes décident de la lecture — la perte
+moyenne, le **bruit** de permutation (en dessous, on ne mesure rien) et la **pire
+saison** (une feature qui sauve un hiver et en abîme un autre est instable, pas utile).
+Distinguer le bruit de permutation de l'écart entre saisons est ce qui rend le verdict
+lisible : confondus, tout paraît insignifiant.
 
 ## Honnêteté du backtest
 
@@ -127,8 +279,23 @@ sur l'erreur de prévision réellement mesurée, et sont exclues de l'évaluatio
 
 ```bash
 python -m src.backtest   # rejeu walk-forward + critères de viabilité
-python run_tests.py      # règles métier vérifiées contre 6 saisons réelles
+python run_tests.py      # règles métier + pipeline
 ```
+
+**Le backtest ne note que les jours où le Rouge est possible.** L'entraînement, lui,
+continue de voir toute l'année : les jours sans enjeu portent l'état des quotas et la
+dynamique de la saison, dont le modèle a besoin. Seule la note est restreinte, parce
+qu'un score calculé sur des journées dont la réponse est connue d'avance ne mesure
+rien. Le même périmètre sert à l'onglet Historique, et un test verrouille le fait que
+les deux implémentations — le prédicat Python et le filtre SQL — désignent bien les
+mêmes jours.
+
+`run_tests.py` mêle deux familles. `tests/test_rules.py` confronte les règles Tempo aux
+**vraies** couleurs collectées : sans base constituée il se saute, plutôt que d'échouer
+pour une raison qui n'est pas un bug. `tests/test_pipeline.py` tourne sur une base
+synthétique (`tests/fixtures.py`) et doit passer partout — il vérifie ce qui casse en
+silence : une feature ajoutée sans son nom, une valeur qui regarde vers l'avenir, un
+filtre qui ne filtre pas.
 
 ## Règles Tempo encodées (vérifiées sur 2020-2026)
 
@@ -141,6 +308,13 @@ python run_tests.py      # règles métier vérifiées contre 6 saisons réelles
 Ces contraintes sont appliquées **après** le modèle : une couleur impossible voit sa
 probabilité mise à zéro, le reste est renormalisé.
 
+## Historique des mesures
+
+`JOURNAL.md` garde la trace de ce qui a été mesuré, retenu et **écarté** — avec les
+chiffres. `config.py` dit ce que le modèle fait ; le journal dit pourquoi, et ce qui
+avait été essayé avant. Sans lui, une piste déjà mesurée sans succès se represente tôt
+ou tard comme une bonne idée neuve.
+
 ## Structure
 
 ```
@@ -148,7 +322,9 @@ ingest.py      collecte historique (à lancer une fois)
 collector.py   pipeline quotidien : couleurs + météo + prédictions figées
 app.py         serveur web (onglets Prévisions / Historique)
 backfill.py    rejoue le backtest dans l'historique de la page
-analyse_seuils.py  balayage du seuil d'alerte Rouge sur 5 saisons
+analyse_seuils.py  balayage des seuils d'alerte Rouge et Blanc sur 5 saisons
+analyse_euros.py   ce que la prediction rapporte, et a quel prix en contrainte
+diagnostic_features.py  ce que chaque feature apporte, par permutation
 src/rules.py   contraintes contractuelles Tempo
 src/features.py construction des features, strictement point-in-time
 src/model.py   baseline climatologique + GBM calibré

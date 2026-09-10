@@ -80,6 +80,11 @@
         <button data-source="live">Temps réel</button>
         <button data-source="backtest">Backtest</button>
       </div>
+      <div class="seg" id="period-filter">
+        <button class="is-active" data-period="all">Toute l'année</button>
+        <button data-period="hiver">Nov → mars</button>
+        <button data-period="eligibles">Jours éligibles</button>
+      </div>
       <label class="pick">Échéance
         <select id="horizon-filter">
           <option value="">toutes</option>
@@ -87,18 +92,28 @@
       </label>
     </div>
 
+    <p class="period-note" id="period-note"></p>
+
     <div class="stats" id="stats"></div>
 
     <div class="history-grid">
       <div class="card-block">
         <h3>Précision par échéance</h3>
         <div id="horizon-bars" class="hbars"></div>
+        <p class="legend">réussite · <b>R</b> rouges anticipés <em>/ alertes justifiées</em></p>
       </div>
       <div class="card-block">
         <h3>Matrice de confusion</h3>
         <div id="confusion" class="confusion"></div>
         <p class="legend">lignes = couleur réelle · colonnes = couleur prédite</p>
       </div>
+    </div>
+
+    <div class="card-block">
+      <h3>Les probabilités tiennent-elles leurs promesses ?</h3>
+      <div id="reliability" class="reliability"></div>
+      <p class="legend">Chaque tranche compare la probabilité de Rouge annoncée à la
+        fréquence réellement observée. Un modèle honnête reste près de la diagonale.</p>
     </div>
 
     <div class="card-block">

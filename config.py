@@ -69,6 +69,67 @@ SOLAR_WEIGHTS = {
 # Courbe de puissance d'eolienne (m/s) : demarrage, puissance nominale, coupure.
 WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 
+# ---------------------------------------------------------------------------
+# Reglages du modele, tous adosses a une mesure (voir diagnostic_features.py et
+# selection_modele.py). Le probleme a traiter n'est pas la precision moyenne mais
+# l'INSTABILITE : 69 % de reussite un hiver, 51 % le suivant, sur les seuls jours
+# ou le Rouge est possible. Un modele qu'on ne peut pas croire une annee sur trois
+# n'est pas fiable, quelle que soit sa moyenne.
+
+# Features neutralisees. Vide : la mesure a dementi l'intuition.
+#
+# La permutation designait le groupe « offre (nucleaire) » comme nuisible dans
+# toutes les saisons, et j'en avais conclu qu'il fallait le retirer. Le
+# reentrainement SANS ces colonnes dit autre chose : la log-loss moyenne s'ameliore
+# (0,770 -> 0,749) mais la PIRE saison se degrade (1,085 -> 1,124). Or c'est le
+# plancher qui decide ici, pas la moyenne.
+#
+# La lecon vaut d'etre notee : permuter une colonne sur un modele deja entraine ne
+# dit pas ce que vaut un modele entraine sans elle. Dans le premier cas les autres
+# colonnes gardent les compensations apprises grace a celle qu'on detruit ; dans le
+# second, le modele se reorganise. Les deux mesures repondent a deux questions.
+EXCLUDED_FEATURES = []
+
+# Poids des jours ou le Rouge est possible pendant l'entrainement. A 1.0 : desactive.
+# L'idee -- concentrer l'apprentissage sur le regime hivernal plutot que sur des
+# journees d'ete ou la reponse est connue d'avance -- reste defendable, mais mesuree
+# elle degrade nettement 2024-2025 (0,638 -> 0,720) sans relever le plancher.
+WINTER_WEIGHT = 1.0
+
+# Nombre de modeles moyennes.
+# Premiere tentative a 5 sans aucun effet, pour une raison instructive : avec
+# early_stopping desactive et moins de lignes que le seuil de sous-echantillonnage du
+# binning, HistGradientBoosting est DETERMINISTE -- les cinq graines rendaient cinq
+# modeles identiques. Une fois `max_features` ajoute pour diversifier les tirages, le
+# gain apparaît : la pire saison passe de 1,014 a 0,902 de log-loss, et 2023-2024
+# s'ameliore de 1,053 a 0,809. Cinq fois le temps de calcul, mais c'est le poste ou
+# la fiabilite se gagne.
+N_SEEDS = 5
+
+# Couper la decision en deux etages : « journee tendue ? » puis « Blanc ou Rouge ? ».
+# Visait la seule faiblesse qui reste : 220 jours Blanc annonces Rouge, et 71 % des
+# fausses alertes tombant sur du Blanc. MESURE ET ECARTE : gagne sur trois saisons,
+# perd lourdement sur la quatrieme (pire saison 0,902 -> 1,104), celle ou la fin
+# d'hiver est arithmetique. Couper la decision en deux coupe aussi la contrainte de
+# quota en deux : le second etage arbitre sans voir que le calendrier a deja tranche.
+# Reste implemente parce qu'il echange 5 points de rappel Rouge contre 3 de precision
+# d'alerte -- un compromis defendable si un jour on prefere alerter moins mais mieux.
+TWO_STAGE = False
+
+# Imposer le Rouge quand le quota ne tient plus dans les jours restants.
+# C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.
+FORCE_QUOTA_ROUGE = True
+
+# Periodes d'evaluation. Un taux de reussite calcule sur l'annee entiere est flatte
+# par les mois ou la reponse est connue d'avance : d'avril a octobre tout est Bleu.
+# Le seul chiffre qui dit quelque chose est celui mesure la ou le modele a un choix
+# a faire -- d'ou ces trois denominateurs, du plus flatteur au plus honnete.
+PERIODS = {
+    "all": "toute l'annee",
+    "hiver": "novembre a mars",          # fenetre ou un Rouge est possible
+    "eligibles": "jours ou le Rouge est possible",  # + lundi-vendredi, hors feries
+}
+
 # Seuil au-dela duquel un jour est annonce Rouge. C'est un arbitrage, pas un
 # reglage technique : mesure sur 5 saisons (voir analyse_seuils.py)
 #   0.10 -> 90% des Rouge detectes, ~22 fausses alertes / echeance / hiver
@@ -78,6 +139,13 @@ WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 # Pour changer de point de fonctionnement : modifier cette valeur, puis
 # `python analyse_seuils.py` pour revoir le tableau complet.
 ROUGE_ALERT_THRESHOLD = 0.25
+
+# Meme arbitrage pour le Blanc. Sans ce seuil le Blanc ne l'emporte que par argmax,
+# et il ne pese que ~12 % des jours contre 82 % de Bleu : il ne gagne donc presque
+# jamais, d'ou un rappel Blanc mesure a 39 % sur le backtest. Le cout d'un Blanc
+# manque reste faible (heure pleine +16 % contre +341 % pour un Rouge), d'ou un seuil
+# nettement moins agressif que celui du Rouge. `python analyse_seuils.py` balaye les deux.
+BLANC_ALERT_THRESHOLD = 0.40
 
 # Dossier du site. En local il est range dans web/ ; sur le depot publie par GitHub
 # Pages, la page doit etre a la racine. On s'adapte plutot que de dupliquer les fichiers.

@@ -7,7 +7,28 @@ on:
   schedule:
     # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee.
     - cron: "30 10 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      reentrainer:
+        description: "Reentrainer le modele (a faire apres tout changement de features)"
+        type: boolean
+        default: false
+      rejouer:
+        description: "Rejouer le backtest dans l'historique de la page (long)"
+        type: boolean
+        default: false
+      diagnostic:
+        description: "Mesurer l'apport de chaque feature (tres long)"
+        type: boolean
+        default: false
+      selection:
+        description: "Comparer les configurations de modele (tres long)"
+        type: boolean
+        default: false
+      saisons:
+        description: "Profiler les saisons : pourquoi certains hivers sont durs"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,6 +51,11 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Les tests hors base tournent partout ; ceux qui exigent les vraies donnees
+      # se sautent tant que le cache n'a rien restaure.
+      - name: Tests
+        run: python run_tests.py
+
       # Cle glissante : chaque execution ecrit un nouveau cache, restore-keys
       # recupere le plus recent (une cle Actions ne peut pas etre ecrasee).
       - name: Restaurer la base et le modele
@@ -50,12 +76,43 @@ jobs:
             python backfill.py
           fi
 
+      # AVANT la collecte : `collector.py` reentraine de lui-meme quand le modele en
+      # cache est obsolete, et il le ferait sur une base ou `nucleaire_mw` est encore
+      # vide -- les predictions du jour sortiraient d'un modele sans donnees d'offre.
+      - name: Recollecter la consommation (colonnes ajoutees depuis)
+        if: inputs.reentrainer == true
+        run: python ingest_conso.py
+
       - name: Collecte du jour et prediction
         run: python collector.py
 
-      - name: Reentrainer le modele le lundi
+      # Un changement de features rend le modele en cache obsolete : ses colonnes ne
+      # correspondent plus. D'ou le declenchement manuel, en plus du lundi.
+      - name: Reentrainer le modele
         run: |
-          if [ "$(date +%u)" = "1" ]; then python collector.py --train; fi
+          if [ "${{ inputs.reentrainer }}" = "true" ] || [ "$(date +%u)" = "1" ]; then
+            python collector.py --train
+          fi
+
+      - name: Rejouer le backtest dans l'historique
+        if: inputs.rejouer == true
+        run: python backfill.py
+
+      # Purement informatif : le resultat se lit dans les logs, rien n'est publie.
+      - name: Mesurer l'apport de chaque feature
+        if: inputs.diagnostic == true
+        run: python diagnostic_features.py --reps 5
+
+      # Purement informatif lui aussi : la conclusion se lit dans les logs et se
+      # reporte a la main dans config.py, plutot que de laisser un script decider
+      # seul d'un reglage sur quatre saisons.
+      - name: Profiler les saisons
+        if: inputs.saisons == true
+        run: python diagnostic_saison.py
+
+      - name: Comparer les configurations de modele
+        if: inputs.selection == true
+        run: python selection_modele.py
 
       - name: Figer les donnees du site
         run: python export_static.py

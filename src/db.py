@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS renewables (
 
 -- Consommation et production nationales reelles (eCO2mix), en MW.
 -- `prevision_j1_peak_mw` est la prevision de RTE elle-meme pour le lendemain.
+-- `nucleaire_mw` est le cote OFFRE : un jour Rouge nait d'une marge tendue, pas
+-- d'un froid absolu, et la puissance nucleaire disponible en est le premier terme.
 CREATE TABLE IF NOT EXISTS conso (
     date TEXT PRIMARY KEY,
     peak_mw REAL,
@@ -54,6 +56,7 @@ CREATE TABLE IF NOT EXISTS conso (
     eolien_mw REAL,
     solaire_mw REAL,
     prevision_j1_peak_mw REAL,
+    nucleaire_mw REAL,
     source TEXT,
     fetched_at TEXT
 );
@@ -92,8 +95,20 @@ def connect(path=None):
     return conn
 
 
+# Colonnes ajoutees apres coup. `CREATE TABLE IF NOT EXISTS` ne touche pas une table
+# existante : sans ce rattrapage, une base deja constituee (celle du cache Actions,
+# par exemple) resterait sans les nouvelles colonnes et la collecte planterait.
+MIGRATIONS = [
+    ("conso", "nucleaire_mw", "REAL"),
+]
+
+
 def init_db(conn):
     conn.executescript(SCHEMA)
+    for table, column, coltype in MIGRATIONS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
     conn.commit()
 
 
@@ -139,9 +154,9 @@ def upsert_renewables(conn, rows):
 def upsert_conso(conn, rows):
     conn.executemany(
         """INSERT INTO conso (date, peak_mw, mean_mw, eolien_mw, solaire_mw,
-                              prevision_j1_peak_mw, source, fetched_at)
+                              prevision_j1_peak_mw, nucleaire_mw, source, fetched_at)
            VALUES (:date, :peak_mw, :mean_mw, :eolien_mw, :solaire_mw,
-                   :prevision_j1_peak_mw, :source, :fetched_at)
+                   :prevision_j1_peak_mw, :nucleaire_mw, :source, :fetched_at)
            ON CONFLICT(date) DO UPDATE SET
              peak_mw = COALESCE(excluded.peak_mw, conso.peak_mw),
              mean_mw = COALESCE(excluded.mean_mw, conso.mean_mw),
@@ -149,6 +164,7 @@ def upsert_conso(conn, rows):
              solaire_mw = COALESCE(excluded.solaire_mw, conso.solaire_mw),
              prevision_j1_peak_mw = COALESCE(excluded.prevision_j1_peak_mw,
                                              conso.prevision_j1_peak_mw),
+             nucleaire_mw = COALESCE(excluded.nucleaire_mw, conso.nucleaire_mw),
              source = excluded.source, fetched_at = excluded.fetched_at""",
         rows,
     )

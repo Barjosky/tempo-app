@@ -21,9 +21,14 @@ BASE = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets"
 CONSOLIDE = "eco2mix-national-cons-def"
 TEMPS_REEL = "eco2mix-national-tr"
 
+# `max(nucleaire)` sert de proxy de disponibilite du parc : la puissance nucleaire
+# reellement appelee dans la journee minore la puissance disponible, et son
+# effondrement (hiver 2022-2023, corrosion sous contrainte) est precisement ce qui
+# a multiplie les jours Rouge sans qu'il fasse plus froid pour autant.
 DAILY_SELECT = ("max(consommation) as peak, avg(consommation) as moyenne, "
                 "avg(eolien) as eolien, avg(solaire) as solaire, "
-                "max(prevision_j1) as prevision_j1_peak")
+                "max(prevision_j1) as prevision_j1_peak, "
+                "max(nucleaire) as nucleaire")
 
 
 def _get(dataset, params, retries=3):
@@ -61,6 +66,7 @@ def fetch_daily(dataset, start, end):
                 "eolien_mw": row["eolien"],
                 "solaire_mw": row["solaire"],
                 "prevision_j1_peak_mw": row.get("prevision_j1_peak"),
+                "nucleaire_mw": row.get("nucleaire"),
             }
         cur = stop + timedelta(days=1)
         time.sleep(0.3)
@@ -82,5 +88,6 @@ def to_rows(series, source):
         "date": day, "peak_mw": v["peak_mw"], "mean_mw": v["mean_mw"],
         "eolien_mw": v["eolien_mw"], "solaire_mw": v["solaire_mw"],
         "prevision_j1_peak_mw": v["prevision_j1_peak_mw"],
+        "nucleaire_mw": v.get("nucleaire_mw"),
         "source": source, "fetched_at": now,
     } for day, v in sorted(series.items())]
