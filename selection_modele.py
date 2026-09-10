@@ -47,11 +47,15 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 # Chaque candidat isole UNE idee, pour que le tableau se lise sans ambiguite.
 # La cible est la fin de saison sous contrainte de quota : c'est elle qui plombe
 # 2025-2026, ou treize des vingt-deux Rouge sont tombes en mars, jusqu'au 31.
+# Chaque candidat FIXE tous les reglages qui varient, sans jamais laisser un defaut
+# de config combler un trou : le jour ou N_SEEDS est passe de 1 a 5, les candidats
+# qui ne le precisaient pas ont silencieusement herite de l'ensemble, et le tableau
+# comparait six variantes deja ensemblees en les etiquetant autrement.
 CANDIDATS = [
-    ("reference", dict(excluded=MARGE, force_quota=False)),
-    ("marge en jours", dict(excluded=[], force_quota=False)),
-    ("contrainte quota", dict(excluded=MARGE, force_quota=True)),
-    ("les deux", dict(excluded=[], force_quota=True)),
+    ("reference", dict(excluded=MARGE, force_quota=False, n_seeds=1)),
+    ("marge en jours", dict(excluded=[], force_quota=False, n_seeds=1)),
+    ("contrainte quota", dict(excluded=MARGE, force_quota=True, n_seeds=1)),
+    ("les deux", dict(excluded=[], force_quota=True, n_seeds=1)),
     # Garde une trace des pistes deja mesurees sans succes, pour ne pas les
     # reproposer plus tard en croyant les avoir oubliees.
     ("les deux + ensemble", dict(excluded=[], force_quota=True, n_seeds=5)),
