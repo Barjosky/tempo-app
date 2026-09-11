@@ -5,8 +5,16 @@ name: Prevision quotidienne
 
 on:
   schedule:
+    # 6h30 UTC = 8h30 a Paris l'ete. Demander SI TOT est contre-intuitif -- l'annonce
+    # RTE n'a pas encore eu lieu -- mais c'est justement le retard de GitHub qu'on
+    # exploite : mesure a 2 h 30 / 4 h, ce passage s'executera entre 11h et 12h30,
+    # apres l'annonce. On demande tot pour etre servi a l'heure.
+    # Le pari peut rater dans les deux sens : si GitHub redevient ponctuel, ce passage
+    # tourne avant l'annonce et le J+1 sort en prediction au lieu de la couleur
+    # officielle. D'ou le cron suivant, conserve comme filet.
+    - cron: "30 6 * * *"
     # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee : 11h30 l'hiver,
-    # 12h30 l'ete.
+    # 12h30 l'ete. Le filet, celui qui ne depend d'aucun pari.
     - cron: "30 10 * * *"
     # Deuxieme passage en fin de journee, pour rattraper une prevision meteo qui a
     # bouge depuis le matin. 19h l'ete, 18h l'hiver -- un cron ne connait que l'UTC et
@@ -125,11 +133,12 @@ jobs:
 
       # Un changement de features rend le modele en cache obsolete : ses colonnes ne
       # correspondent plus. D'ou le declenchement manuel, en plus du lundi.
-      # Le lundi, le reentrainement suit la collecte du matin. Sans cette condition il
-      # tournerait aussi le soir, pour cinq minutes de calcul et le meme modele.
+      # Le lundi, le reentrainement suit un SEUL passage, celui de 10h30 : la condition
+      # etait « tout sauf le soir », ce qui en aurait declenche deux depuis l'ajout du
+      # passage de 6h30 -- cinq minutes de calcul pour le meme modele.
       - name: Reentrainer le modele
         env:
-          PASSAGE_DU_MATIN: ${{ github.event.schedule != '0 17 * * *' }}
+          PASSAGE_DU_MATIN: ${{ github.event.schedule == '30 10 * * *' }}
         run: |
           if [ "${{ inputs.reentrainer }}" = "true" ] ||
              { [ "$(date +%u)" = "1" ] && [ "$PASSAGE_DU_MATIN" = "true" ]; }; then

@@ -646,18 +646,16 @@ def test_la_page_annonce_l_heure_obtenue_pas_l_heure_demandee():
     alors que rien n'avait bouge. On verrouille donc l'ecart : l'heure annoncee doit
     suivre la MESURE, pas la demande.
     """
-    vu = cadence.observee(PASSAGES_REELS, ["10:30", "17:00"])
+    vu = cadence.observee(PASSAGES_REELS)
     matin = vu["passages"][0]
-    assert matin["attendu_utc"] != matin["cron_utc"], (
-        "l'heure annoncee retombe sur le cron : la mesure n'est pas utilisee")
+    assert "10:30" not in str(vu), "l'horaire DEMANDE ne doit pas ressortir de la mesure"
     assert matin["attendu_utc"] == "14:32", f"mediane attendue 14:32, obtenu {matin}"
-    assert 230 <= matin["retard_median_min"] <= 250
 
 
 def test_sans_assez_de_mesures_on_ne_promet_rien():
     """Le passage du soir n'a qu'une observation : annoncer une heure precise dessus
     serait remplacer une promesse fausse par une autre."""
-    vu = cadence.observee(PASSAGES_REELS, ["10:30", "17:00"])
+    vu = cadence.observee(PASSAGES_REELS)
     soir = vu["passages"][1]
     assert soir["mesures"] == 1
     assert not soir["fiable"], "une seule mesure ne fait pas une cadence"
@@ -668,9 +666,10 @@ def test_sans_assez_de_mesures_on_ne_promet_rien():
 
 def test_un_horaire_trop_disperse_est_declare_non_fiable():
     """Une mediane sur des heures qui sautent de trois heures ne prevoit rien."""
-    erratiques = ["2026-09-0%dT%02d:00:00+00:00" % (j, h)
-                  for j, h in ((1, 11), (2, 14), (3, 12), (4, 15), (5, 11))]
-    vu = cadence.observee(erratiques, ["10:30"])
+    # Toutes a moins de deux heures de la suivante : un seul rendez-vous, tres etale.
+    erratiques = ["2026-09-0%dT%02d:%02d:00+00:00" % (j, h, m) for j, h, m in
+                  ((1, 11, 0), (2, 12, 30), (3, 13, 50), (4, 12, 10), (5, 11, 40))]
+    vu = cadence.observee(erratiques)
     assert vu["passages"][0]["mesures"] == 5
     assert not vu["passages"][0]["fiable"], "dispersion de 4 h declaree fiable"
 
@@ -688,18 +687,17 @@ def test_un_essai_manuel_ne_fausse_pas_la_cadence():
         db.enregistrer_passage(conn, horodatage, horodatage[:10], declencheur)
     vus = db.passages_reguliers(conn)
     assert len(vus) == 3, f"l'essai manuel n'a pas ete ecarte : {vus}"
-    assert cadence.observee(vus, ["10:30"])["passages"][0]["attendu_utc"] == "14:32"
+    assert cadence.observee(vus)["passages"][0]["attendu_utc"] == "14:32"
 
 
 def test_l_amorce_s_efface_quand_la_base_mesure_seule():
     """L'amorce evite deux jours sans cadence au demarrage. Mais un releve fige dans
     le code ne doit pas continuer a peser une fois que le systeme se mesure lui-meme :
     sinon la page annoncerait encore, dans six mois, l'horaire de septembre."""
-    horaires = ["10:30", "17:00"]
-    assert cadence.avec_amorce([], horaires) == cadence.AMORCE, (
+    assert cadence.avec_amorce([]) == cadence.AMORCE, (
         "sans aucune observation, l'amorce devrait servir")
-    propres = ["2027-01-%02dT09:00:00+00:00" % j for j in range(1, 7)]
-    assert cadence.avec_amorce(propres, horaires) == propres, (
+    propres = ["2027-01-%02dT09:00:00+00:00" % j for j in range(1, 8)]
+    assert cadence.avec_amorce(propres) == propres, (
         "l'amorce pese encore alors que la base a de quoi mesurer seule")
 
 
@@ -755,3 +753,29 @@ def test_la_vue_se_recree_sur_une_base_ancienne():
     sql = conn.execute("""SELECT sql FROM sqlite_master
                           WHERE type='view' AND name='predictions_a_jour'""").fetchone()
     assert "ROW_NUMBER" in (sql["sql"] or ""), "la vue perimee n'a pas ete recreee"
+
+
+def test_deux_crons_rapproches_ne_se_confondent_pas():
+    """La raison d'etre du regroupement par heure observee.
+
+    Le passage de 6h30 retarde de quatre heures s'execute vers 10h30 -- l'heure meme
+    d'un autre cron. L'ancienne methode, qui rangeait chaque passage sous le cron qu'il
+    suivait de plus pres, aurait credite ce dernier d'un retard NUL et fait annoncer a
+    la page une heure quatre heures trop tot. On ne regarde donc plus que ce qui a ete
+    observe.
+    """
+    vus = (["2026-10-%02dT10:31:00+00:00" % j for j in (1, 2, 3)]      # 6h30 + 4 h
+           + ["2026-10-%02dT14:33:00+00:00" % j for j in (1, 2, 3)])   # 10h30 + 4 h
+    passages = cadence.observee(vus)["passages"]
+    heures = [p["attendu_utc"] for p in passages]
+    assert heures == ["10:31", "14:33"], f"rendez-vous mal separes : {heures}"
+    assert all(p["fiable"] for p in passages)
+
+
+def test_les_horaires_demandes_restent_documentes():
+    """`SCHEDULES_UTC` ne sert plus a mesurer, mais il dit ce qu'on DEMANDE -- et un
+    test le verrouille deja sur les `cron` du workflow. Les deux doivent rester en
+    phase : le jour ou un cron est ajoute sans la config, c'est ce couple qui le dit."""
+    assert "06:30" in config.SCHEDULES_UTC, (
+        "le passage tot, ajoute pour viser midi, a disparu de la configuration")
+    assert len(config.SCHEDULES_UTC) == 3

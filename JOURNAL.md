@@ -573,6 +573,29 @@ passage suivant — on annonce une mise à jour imminente et on guette les donn�
 Les essais manuels (`workflow_dispatch`) sont exclus de la médiane : un run lancé à 3 h
 du matin n'a rien à dire sur la cadence quotidienne.
 
+### Un passage à 6h30 pour être servi vers midi
+
+Le retard est reproductible ; autant l'exploiter. Un `cron` à **6h30 UTC** (8h30 Paris
+l'été) demandé *avant* l'annonce RTE s'exécutera, avec les retards mesurés (2 h 30 à
+4 h), **entre 11h et 12h30** — donc après elle. On demande tôt pour être servi à
+l'heure.
+
+C'est un pari, et il peut rater dans les deux sens : si GitHub redevient ponctuel, ce
+passage tourne à 8h30 et le J+1 sort en prédiction au lieu de la couleur officielle.
+Le cron de 10h30 est conservé comme filet, et ne dépend d'aucun pari. Résultat à
+mesurer sur deux ou trois jours.
+
+**Ce que ce créneau a cassé au passage.** La mesure rattachait chaque passage observé au
+`cron` qu'il suivait de plus près. Ça tenait avec deux créneaux espacés de 6 h 30 ; ça
+s'effondre avec 6h30 et 10h30, distants de quatre heures — soit exactement le retard
+mesuré. Le passage de 6h30 exécuté à 10h30 se serait vu créditer d'un **retard nul**, et
+la page aurait annoncé une heure quatre heures trop tôt.
+
+`src/cadence.py` ne regarde donc plus les `cron` **du tout** : il regroupe les heures
+observées pour elles-mêmes, deux passages à moins de deux heures l'un de l'autre
+appartenant au même rendez-vous. La page annonce ce que le système *fait*, quoi qu'on
+lui ait demandé — et le jour où les crons changent, rien n'est à mettre à jour.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
