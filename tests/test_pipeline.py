@@ -6,7 +6,7 @@ regarde vers l'avenir, un filtre qui ne filtre pas.
 """
 import sys
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import fixtures
+import ingest_rte
 from src import db, features, model
 from src.sources import rte
 
@@ -599,3 +600,29 @@ def test_le_jeton_de_continuation_ne_part_pas_en_parametre():
         rte._jeton["valeur"], rte._jeton["expire"] = None, 0.0
     assert "JETON-INTERNE" not in vus.get("url", ""), (
         f"le jeton de continuation a fuite dans l'URL : {vus.get('url')}")
+
+
+def test_la_fenetre_de_publication_ne_va_jamais_dans_le_futur():
+    """RTE refuse une date de publication future, et le refus a coute un run entier.
+
+    La collecte demandait « jusqu'a demain » : les 81 fenetres d'historique sont
+    passees, la derniere a rendu UNADINFO_GENUN_F02, et l'echec a emporte la prevision
+    du jour avec lui. Le controle porte sur la borne elle-meme, pas sur le souvenir
+    d'avoir lu le message d'erreur.
+    """
+    horloge = datetime(2026, 9, 11, 12, 30, 0, tzinfo=timezone.utc)
+    fin = ingest_rte.borne_de_fin(horloge)
+    assert fin < horloge, f"la borne de fin doit etre dans le passe, obtenu {fin}"
+    # Et elle doit rester dans la journee : reculer jusqu'a minuit perdrait les
+    # declarations de la matinee, c'est-a-dire les avaries fortuites.
+    assert fin.date() == horloge.date(), f"borne reculee d'un jour entier : {fin}"
+
+
+def test_les_dates_envoyees_a_rte_portent_le_suffixe_z():
+    """Le decalage explicite (« +02:00 ») est refuse : UNADINFO_GENUN_F03."""
+    jour = rte._horodatage(date(2026, 9, 11))
+    instant = rte._horodatage(datetime(2026, 9, 11, 12, 30, 5, tzinfo=timezone.utc))
+    for rendu in (jour, instant):
+        assert rendu.endswith("Z"), f"format refuse par RTE : {rendu}"
+        assert "+" not in rendu, f"decalage explicite refuse par RTE : {rendu}"
+    assert jour.endswith("T00:00:00Z") and instant.endswith("T12:30:05Z")

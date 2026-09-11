@@ -39,6 +39,18 @@ def debut_a_rattraper(conn, complet):
     return date.fromisoformat(row["d"]) - timedelta(days=RECOUVREMENT)
 
 
+def borne_de_fin(horloge=None):
+    """Derniere date de publication demandable a RTE.
+
+    En PUBLICATION_DATE, RTE refuse une borne de fin dans le futur : « Publication
+    dates must be in the past » (UNADINFO_GENUN_F02). La minute de retrait absorbe le
+    decalage d'horloge entre le runner et RTE. S'arreter a minuit AUJOURD'HUI serait
+    l'autre facon d'eviter le refus, mais elle perdrait les declarations de la matinee
+    -- donc les avaries fortuites, celles qui apportent le plus d'information.
+    """
+    return (horloge or datetime.now(timezone.utc)) - timedelta(minutes=1)
+
+
 def main():
     complet = "--complet" in sys.argv
     if not rte.disponible():
@@ -48,15 +60,19 @@ def main():
     conn = db.connect()
     db.init_db(conn)
 
-    maintenant = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    horloge = datetime.now(timezone.utc)
+    maintenant = horloge.isoformat(timespec="seconds")
     debut = debut_a_rattraper(conn, complet)
-    fin = date.today() + timedelta(days=1)
-    print(f"Publications du {debut} au {fin} (fenetres de {PAS} jours)")
+    fin = borne_de_fin(horloge)
+    print(f"Publications du {debut} au {fin:%Y-%m-%d %H:%M} UTC "
+          f"(fenetres de {PAS} jours)")
 
     total_lignes, total_arrets, echecs = 0, 0, []
+    detailles, sans_puissance = 0, 0
     curseur = debut
-    while curseur < fin:
-        stop = min(fin, curseur + timedelta(days=PAS))
+    while curseur < fin.date():
+        stop = min(fin, datetime.combine(curseur + timedelta(days=PAS),
+                                         datetime.min.time(), tzinfo=timezone.utc))
         try:
             evts = rte.arrets(curseur, stop, date_type="PUBLICATION_DATE",
                               derniere_version=False)
@@ -64,7 +80,7 @@ def main():
             # Un refus sur une fenetre ne doit pas emporter les suivantes : on le note
             # et on continue, le rattrapage du lendemain repassera dessus.
             echecs.append((curseur, e.code, e.corps[:120]))
-            curseur = stop
+            curseur = stop.date()
             continue
         lignes = []
         for e in evts:
@@ -73,23 +89,42 @@ def main():
             db.upsert_unavailabilities(conn, lignes)
         total_arrets += len(evts)
         total_lignes += len(lignes)
-        print(f"  {curseur} -> {stop} : {len(evts)} arrets, {len(lignes)} paliers")
-        curseur = stop
+        # Compte ce qui vient vraiment des paliers publies par RTE, et ce qui vient du
+        # repli sur la fenetre entiere. Le repli prend la puissance INSTALLEE : un arret
+        # partiel y compte pour toute la tranche, et la puissance perdue est surestimee.
+        # Sans ce chiffre on ne saurait pas si la colonne mesure des arrets ou des
+        # approximations -- et une colonne dont on ignore ce qu'elle contient ne vaut
+        # rien, meme si le backtest l'aime bien.
+        detailles += sum(1 for e in evts if e.get("values"))
+        sans_puissance += sum(1 for l in lignes if l["unavailable_mw"] is None)
+        print(f"  {curseur} -> {stop:%Y-%m-%d} : {len(evts)} arrets, {len(lignes)} paliers")
+        curseur = stop.date()
         time.sleep(1)
 
     for quand, code, corps in echecs:
-        print(f"  ECHEC {quand} — HTTP {code} — {corps}")
+        print(f"::warning::Fenetre RTE en echec {quand} — HTTP {code} — {corps}")
 
     row = conn.execute("""SELECT COUNT(*) n, COUNT(DISTINCT identifier) a,
                                  MIN(publication_date) p0, MAX(publication_date) p1
                           FROM unavailabilities""").fetchone()
     nuc = conn.execute("""SELECT COUNT(DISTINCT identifier) n FROM unavailabilities
                           WHERE fuel_type = 'NUCLEAR'""").fetchone()["n"]
+    part = detailles / total_arrets if total_arrets else 0.0
     print(f"\nRecu : {total_arrets} arrets, {total_lignes} paliers")
+    print(f"  dont {detailles} ({part:.0%}) avec leurs paliers de puissance publies ; "
+          f"les autres sont replies sur la puissance installee")
+    print(f"  paliers sans puissance exploitable : {sans_puissance}")
     print(f"Base : {row['n']} paliers, {row['a']} arrets distincts "
           f"(dont {nuc} nucleaires), publies du {row['p0']} au {row['p1']}")
+    if not row["n"]:
+        # Rien du tout en base : la source est cassee, il faut le savoir tout de suite.
+        raise SystemExit("Aucune indisponibilite collectee — la source est hors service")
     if echecs:
-        raise SystemExit(f"{len(echecs)} fenetre(s) en echec — voir ci-dessus")
+        # Une fenetre en echec ne doit pas emporter la prevision du jour : la source est
+        # facultative, et le trou se rebouche tout seul. Le rattrapage repart de la
+        # derniere publication EN BASE, donc il repassera sur la fenetre manquee demain
+        # sans que personne ait a y penser.
+        print(f"{len(echecs)} fenetre(s) en echec — le prochain passage les reprendra")
 
 
 if __name__ == "__main__":

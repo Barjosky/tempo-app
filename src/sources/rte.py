@@ -122,6 +122,18 @@ def _get(chemin, params, retries=3):
             time.sleep(3 * (essai + 1))
 
 
+def _horodatage(x):
+    """Le format que RTE accepte, pour une date comme pour un instant.
+
+    Suffixe Z impose : le decalage explicite (« +02:00 ») est refuse
+    (UNADINFO_GENUN_F03). Une `date` nue vaut minuit ; un `datetime` garde son heure,
+    ce qui sert a demander « jusqu'a maintenant » sans franchir le futur.
+    """
+    if hasattr(x, "hour"):
+        return x.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return x.strftime("%Y-%m-%dT00:00:00Z")
+
+
 def arrets(debut, fin, fuel=None, date_type="EVENT_DATE", derniere_version=True):
     """Indisponibilites de production, dans la fenetre [debut, fin].
 
@@ -140,12 +152,11 @@ def arrets(debut, fin, fuel=None, date_type="EVENT_DATE", derniere_version=True)
     out, suite = [], None
     while True:
         params = {
-            # RTE refuse un decalage horaire explicite (« +02:00 ») et n'accepte que
-            # le suffixe Z : UNADINFO_GENUN_F03, « does not follow the format
-            # described in the user guide ». Mesure faite, pas supposee. En UTC les
-            # dates sont d'ailleurs sans ambiguite d'une saison a l'autre.
-            "start_date": debut.strftime("%Y-%m-%dT00:00:00Z"),
-            "end_date": fin.strftime("%Y-%m-%dT00:00:00Z"),
+            # En PUBLICATION_DATE, RTE exige en plus que `end_date` soit DANS LE
+            # PASSE (UNADINFO_GENUN_F02) : une publication future n'existe pas. D'ou
+            # les instants plutot que les dates -- voir `_horodatage`.
+            "start_date": _horodatage(debut),
+            "end_date": _horodatage(fin),
             "date_type": date_type,
             "last_version": "true" if derniere_version else "false",
             "fuel_type": fuel,
