@@ -142,6 +142,9 @@ main { padding: 28px 40px 72px; }
 
 /* cartes jour */
 .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 14px; }
+/* Onze jours sur cinq colonnes laissent quatre trous en derniere ligne. Six colonnes
+   les repartissent en 6 + 5 : un seul trou, et la grille se lit comme deux semaines. */
+@media (min-width: 1180px) { .days { grid-template-columns: repeat(6, 1fr); } }
 
 .day {
   position: relative; background: var(--ink-2); border: 1px solid var(--line);
@@ -205,11 +208,35 @@ main { padding: 28px 40px 72px; }
   font-family: var(--mono); font-size: 10.5px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 .pmeta .hot { color: var(--rouge); font-weight: 500; }
-.temp {
-  margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(41,52,68,.6);
-  color: var(--fg); font-family: var(--mono); font-size: 12px;
+/* La temperature explique la prevision : elle se lit sous le verdict, pas en pied
+   de carte en corps 12. */
+.temp { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
+.t-now {
+  font-family: var(--display); font-size: 19px; font-weight: 700; line-height: 1;
 }
-.temp span { color: var(--fg-dim); }
+.t-range { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+
+/* Une journee sans enjeu se replie : le regard va aux journees qui en ont une. */
+.day.is-calme { padding: 13px 14px; opacity: .82; }
+.day.is-calme:hover { opacity: 1; }
+.day.is-calme .verdict { margin-top: 9px; }
+.day.is-calme .verdict b { font-size: 15px; }
+.day.is-calme .dnum { font-size: 18px; }
+.day.is-calme .t-now { font-size: 15px; }
+
+/* bandeau « rien a signaler » : meme place que l'alerte, ton oppose */
+.calm {
+  display: flex; gap: 14px; align-items: center; margin-bottom: 18px;
+  padding: 13px 18px; border-radius: var(--radius);
+  background: linear-gradient(90deg, rgba(75,144,255,.10), rgba(75,144,255,.02));
+  border: 1px solid rgba(75,144,255,.22); font-size: 13.5px; line-height: 1.5;
+  color: var(--fg-dim);
+}
+.calm-mark {
+  flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--bleu);
+  box-shadow: 0 0 0 5px rgba(75,144,255,.12);
+}
+.calm strong { color: var(--fg); }
 
 /* ---------- historique ---------- */
 .filters { display: flex; gap: 20px; align-items: center; margin-bottom: 22px; flex-wrap: wrap; }
@@ -238,16 +265,37 @@ main { padding: 28px 40px 72px; }
   padding: 18px 20px; margin-bottom: 16px;
 }
 .card-block h3 { font-family: var(--display); font-size: 15px; margin: 0 0 16px; font-weight: 700; }
-.hbars { display: grid; gap: 10px; }
-.hbar {
-  display: grid; grid-template-columns: 44px 1fr 148px; gap: 12px; align-items: center;
-  font-family: var(--mono); font-size: 11.5px;
+/* ---------- graphiques ----------
+   Traits fins, grille en filet solide un ton au-dessus du fond, valeurs exactes
+   dans l'infobulle plutot qu'un nombre sur chaque point. */
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid { stroke: var(--line); stroke-width: 1; opacity: .55; }
+.chart .ax {
+  fill: var(--fg-dim); font-family: var(--mono); font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
-/* Trois nombres tiennent sur une ligne ou ne se lisent pas. */
-.hbar .v { white-space: nowrap; }
-.hbar .t { height: 9px; background: var(--ink-3); border-radius: 5px; overflow: hidden; }
-.hbar .t i { display: block; height: 100%; background: linear-gradient(90deg, var(--bleu), var(--amber)); }
-.hbar .v { text-align: right; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.chart .line { fill: none; stroke: var(--amber); stroke-width: 2; stroke-linecap: round; }
+.chart .pt { fill: var(--amber); stroke: var(--ink-2); stroke-width: 2; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .endlab {
+  fill: var(--fg); font-family: var(--mono); font-size: 11px; font-weight: 600;
+}
+/* La diagonale est une reference, pas une grille : trait plein, discret, nomme. */
+/* Un carre reste un carre : etire sur la largeur d'une carte, il grossissait ses
+   propres etiquettes jusqu'a l'absurde et faussait la lecture de la diagonale. */
+.calib { max-width: 380px; margin: 0 auto; }
+.calib .ideal { stroke: var(--fg-dim); stroke-width: 1.5; opacity: .45; }
+.chart .ax-title { fill: var(--fg-dim); font-family: var(--sans); font-size: 10px; }
+.calib .ideal-lab { fill: var(--fg-dim); font-size: 9.5px; font-family: var(--sans); }
+.calib .dot { fill: var(--rouge); fill-opacity: .75; stroke: var(--ink-2); stroke-width: 2; cursor: pointer; }
+.calib .dot.is-off { fill: var(--amber); }
+.chart-axis { color: var(--fg-dim); font-size: 11px; margin: 10px 0 0; }
+.chart-tip {
+  position: absolute; z-index: 60; max-width: 250px; pointer-events: none;
+  background: var(--ink-3); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 10px; font-size: 11.5px; line-height: 1.45; color: var(--fg);
+  box-shadow: 0 8px 26px -10px #000;
+}
 
 .confusion { display: grid; grid-template-columns: 70px repeat(3, 1fr); gap: 5px; font-size: 12px; }
 .confusion div {
@@ -274,7 +322,11 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .src { color: var(--fg-dim); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
 .empty { color: var(--fg-dim); padding: 30px 0; text-align: center; }
 
+/* Sur un ecran etroit, la question du jour passe avant le contexte : on ne fait pas
+   defiler trois jauges et une grille tarifaire pour apprendre la couleur de demain. */
 @media (max-width: 1000px) {
+  #panel-forecast.is-active .forecast-main { order: 1; }
+  #panel-forecast.is-active .side { order: 2; }
   .masthead, .tabs, main { padding-left: 20px; padding-right: 20px; }
   #panel-forecast.is-active { grid-template-columns: 1fr; }
   .side { grid-template-columns: 1fr 1fr; align-items: start; }
@@ -331,3 +383,26 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 /* Les deux faces d'une alerte : en attraper assez, sans deranger pour rien. */
 .hbar .v em { font-style: normal; color: var(--fg-dim); }
 .stat[data-warn="1"] b { color: var(--amber); }
+
+/* Bouton discret dans un titre de bloc : « erreurs seulement ». */
+.card-block h3 { display: flex; align-items: center; gap: 12px; }
+.ghost {
+  margin-left: auto; background: none; border: 1px solid var(--line); color: var(--fg-dim);
+  font-family: var(--sans); font-size: 11.5px; font-weight: 500; padding: 5px 12px;
+  border-radius: 20px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.ghost:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
+.ghost.is-active { background: rgba(247,194,73,.14); border-color: rgba(247,194,73,.4); color: var(--amber); }
+.ghost:disabled { opacity: .4; cursor: default; }
+
+/* Une ligne fausse doit se voir : c'est la seule qu'on vient chercher. */
+#history-table tr.miss td { background: rgba(247,194,73,.07); }
+#history-table tr.miss td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
+
+/* Le carre de calibration laissait deux vides lateraux ; la lecture du graphique
+   occupe la place, au lieu d'etre releguee sous lui en legende. */
+.calib-wrap { display: grid; grid-template-columns: minmax(0, 420px) 1fr; gap: 34px; align-items: center; }
+.calib-read { color: var(--fg-dim); font-size: 13px; line-height: 1.65; max-width: 46ch; }
+.calib-read p { margin: 0 0 12px; }
+.calib-read b { color: var(--fg); font-weight: 600; }
+@media (max-width: 860px) { .calib-wrap { grid-template-columns: 1fr; gap: 18px; } }

@@ -81,9 +81,9 @@
         <button data-source="backtest">Backtest</button>
       </div>
       <div class="seg" id="period-filter">
-        <button class="is-active" data-period="all">Toute l'année</button>
+        <button data-period="all">Toute l'année</button>
         <button data-period="hiver">Nov → mars</button>
-        <button data-period="eligibles">Jours éligibles</button>
+        <button class="is-active" data-period="eligibles">Jours éligibles</button>
       </div>
       <label class="pick">Échéance
         <select id="horizon-filter">
@@ -98,9 +98,10 @@
 
     <div class="history-grid">
       <div class="card-block">
-        <h3>Précision par échéance</h3>
+        <h3>La réussite décroît-elle avec l'échéance ?</h3>
         <div id="horizon-bars" class="hbars"></div>
-        <p class="legend">réussite · <b>R</b> rouges anticipés <em>/ alertes justifiées</em></p>
+        <p class="legend">Survolez un point pour les rouges anticipés et les alertes
+          justifiées de cette échéance.</p>
       </div>
       <div class="card-block">
         <h3>Matrice de confusion</h3>
@@ -111,13 +112,24 @@
 
     <div class="card-block">
       <h3>Les probabilités tiennent-elles leurs promesses ?</h3>
-      <div id="reliability" class="reliability"></div>
-      <p class="legend">Chaque tranche compare la probabilité de Rouge annoncée à la
-        fréquence réellement observée. Un modèle honnête reste près de la diagonale.</p>
+      <div class="calib-wrap">
+        <div id="reliability" class="reliability"></div>
+        <div class="calib-read">
+          <p><b>Comment lire.</b> Chaque point est une tranche de probabilité annoncée.
+            Sa position horizontale est ce que le modèle a promis, sa position verticale
+            ce qui est réellement tombé.</p>
+          <p><b>Sur la diagonale</b>, la promesse est tenue. <b>Au-dessus</b>, le modèle
+            est trop prudent : il annonce moins de Rouge qu'il n'en tombe.
+            <b>En dessous</b>, il est trop sûr de lui.</p>
+          <p>La taille d'un point est son nombre de prédictions ; les points ambrés
+            s'écartent de la diagonale de plus de 15 points.</p>
+        </div>
+      </div>
     </div>
 
     <div class="card-block">
-      <h3>Prédictions figées vs réalité</h3>
+      <h3>Prédictions figées vs réalité
+        <button id="miss-only" class="ghost" type="button">Erreurs seulement</button></h3>
       <div class="table-wrap">
         <table id="history-table">
           <thead><tr>
