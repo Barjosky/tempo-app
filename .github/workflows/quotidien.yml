@@ -29,6 +29,14 @@ on:
         description: "Profiler les saisons : pourquoi certains hivers sont durs"
         type: boolean
         default: false
+      seuils:
+        description: "Recaler les seuils d'alerte, en rappel/precision puis en euros (long)"
+        type: boolean
+        default: false
+      rte:
+        description: "Mesurer la prevision RTE a J+1 seulement, la ou elle existe (long)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -113,6 +121,22 @@ jobs:
       - name: Comparer les configurations de modele
         if: inputs.selection == true
         run: python selection_modele.py
+
+      # La prevision de RTE n'existe qu'a J+1. Permuter sa colonne sur les dix
+      # echeances ne touche qu'un dixieme des lignes : elle sortait en poids mort
+      # sans qu'on sache si c'etait sa valeur ou sa rarete qu'on mesurait.
+      - name: Mesurer la prevision RTE a son echeance
+        if: inputs.rte == true
+        run: python diagnostic_features.py --horizon 1 --reps 8
+
+      # Le seuil d'alerte n'a pas ete recale depuis la contrainte de quota, qui a
+      # change les probabilites de fin d'hiver. Le cache se perime tout seul quand la
+      # configuration bouge, donc `--refit` n'a pas a etre demande de memoire.
+      - name: Recaler les seuils d'alerte
+        if: inputs.seuils == true
+        run: |
+          python analyse_seuils.py
+          python analyse_euros.py
 
       - name: Figer les donnees du site
         run: python export_static.py

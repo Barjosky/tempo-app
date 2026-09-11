@@ -51,6 +51,14 @@ FEATURE_NAMES = [
     # chose en ratio, mais un arbre ne sait pas extrapoler un ratio au-dela de ce
     # qu'il a vu : une marge est un petit entier, il la decoupe sans peine.
     "rouge_slack", "rouge_forced",
+    # Arbitrage Blanc/Rouge. `blanc_pressure` se mesurait sur les jours de CALENDRIER
+    # restants jusqu'au 31 aout, quand `rouge_pressure` compte les jours ELIGIBLES
+    # jusqu'au 31 mars : les deux n'etaient pas comparables, et leur rapport -- quel
+    # quota est le plus rare en ce moment -- ne voulait rien dire. Le Blanc se compte
+    # desormais sur la meme fenetre hivernale, et le rapport devient lisible : au-dessus
+    # de 1, le Rouge se place plus vite que le Blanc, donc une journee tendue penche
+    # Rouge ; au-dessous, elle penche Blanc.
+    "blanc_pressure_hiver", "quota_arbitrage",
 ]
 
 
@@ -654,7 +662,23 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
     rouge_days_left = rules.remaining_rouge_days(target)
     rouge_slack = rules.rouge_slack(target, state["rouge_left"])
     rouge_forced = int(rules.rouge_force(target, state["rouge_left"]))
-    days_left_season = (calendrier.season_end(state["season"]) - target).days + 1
+
+    # Jours ou un Blanc reste possible : hors dimanche, et non les jours de calendrier.
+    blanc_days_left = rules.remaining_blanc_days(target)
+    fin_hiver = date(int(state["season"].split("-")[1]), 3, 31)
+    blanc_days_hiver = (rules.remaining_blanc_days(target, fin_hiver)
+                        if target <= fin_hiver else 0)
+
+    rouge_pressure = state["rouge_left"] / rouge_days_left if rouge_days_left else 0.0
+    blanc_pressure = state["blanc_left"] / blanc_days_left if blanc_days_left else 0.0
+    blanc_pressure_hiver = (state["blanc_left"] / blanc_days_hiver
+                            if blanc_days_hiver else float("nan"))
+    # Passe la fenetre hivernale, l'arbitrage n'a plus d'objet : aucun Rouge n'est
+    # possible. NaN plutot que zero -- un arbre traite l'absence a part, la ou un zero
+    # se confondrait avec « le Blanc est devenu tres rare ».
+    quota_arbitrage = (rouge_pressure / blanc_pressure_hiver
+                       if blanc_pressure_hiver == blanc_pressure_hiver
+                       and blanc_pressure_hiver > 0 else float("nan"))
 
     # Cote offre : ce que le parc nucleaire a recemment su fournir, et l'ecart au
     # niveau habituel de ce mois. La marge qui en decoule est partielle (le reste du
@@ -701,8 +725,8 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         anomaly,
         hdd_prev, hdd_next, hdd_win3,
         state["rouge_used"], state["rouge_left"], state["blanc_used"], state["blanc_left"],
-        state["rouge_left"] / rouge_days_left if rouge_days_left else 0.0,
-        state["blanc_left"] / days_left_season if days_left_season else 0.0,
+        rouge_pressure,
+        blanc_pressure,
         (target - state["last_rouge"]).days if state["last_rouge"] else 999,
         (target - state["last_blanc"]).days if state["last_blanc"] else 999,
         state["rouge_last7"], state["rouge_last14"], state["blanc_last7"],
@@ -718,6 +742,7 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         rte_forecast, rte_gap,
         colder_ahead, budget_ratio,
         rouge_slack if rouge_slack is not None else float("nan"), rouge_forced,
+        blanc_pressure_hiver, quota_arbitrage,
     ]
     return np.array(row, dtype=float)
 

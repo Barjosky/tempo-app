@@ -333,3 +333,109 @@ def test_l_empreinte_des_assets_suit_leur_contenu():
         assert apres != premier, "l'empreinte n'a pas suivi le contenu"
         # Une seule empreinte par asset : pas d'accumulation de ?v= a chaque passage.
         assert apres.count("app.js?v=") == 1 and apres.count("?v=") == 2
+
+
+def test_les_deux_pressions_de_quota_sont_comparables():
+    """Blanc et Rouge doivent se mesurer sur la meme fenetre, sinon leur rapport ment.
+
+    `blanc_pressure` comptait les jours de CALENDRIER jusqu'au 31 aout, quand
+    `rouge_pressure` compte les jours ELIGIBLES jusqu'au 31 mars. Au 13 mars 2026 cela
+    faisait 147 jours contre 13 : un facteur dix, qui rendait tout arbitrage entre les
+    deux quotas illisible.
+    """
+    from src import rules
+
+    mars = date(2026, 3, 13)
+    fin_hiver = date(2026, 3, 31)
+
+    # Aucun dimanche ne doit entrer dans le compte des jours Blanc.
+    debut = date(2026, 3, 1)
+    dimanches = sum(1 for d in _jours(debut, fin_hiver) if d.weekday() == 6)
+    attendu = (fin_hiver - debut).days + 1 - dimanches
+    assert rules.remaining_blanc_days(debut, fin_hiver) == attendu
+
+    # Sur la fenetre hivernale, les deux comptes sont du meme ordre ; sur la saison
+    # entiere, non. C'est precisement ce qui rendait le rapport inutilisable.
+    hiver = rules.remaining_blanc_days(mars, fin_hiver)
+    saison = rules.remaining_blanc_days(mars)
+    rouge = rules.remaining_rouge_days(mars)
+    assert rouge <= hiver <= 2 * rouge, (rouge, hiver)
+    assert saison > 5 * hiver, (saison, hiver)
+
+    # Et le rapport doit disparaitre hors fenetre plutot que de valoir zero : passe le
+    # 31 mars aucun Rouge n'est possible, l'arbitrage n'a plus d'objet.
+    i = features.FEATURE_NAMES.index("quota_arbitrage")
+    store = _STORE["store"]
+    for cible, dedans in ((date(2026, 1, 15), True), (date(2026, 6, 15), False)):
+        run = cible - timedelta(days=3)
+        etat = store.season_state(run)
+        ligne = features.build_row(store, run, cible, etat,
+                                   np.random.default_rng(0), True)
+        if ligne is None:
+            continue
+        # bool() explicite : `ligne[i] == ligne[i]` rend un booleen NumPy, et
+        # `np.True_ is True` vaut faux -- le test passerait a cote de son sujet.
+        fini = bool(ligne[i] == ligne[i])    # False si NaN
+        assert fini is dedans, f"{cible} : arbitrage {'attendu' if dedans else 'de trop'}"
+
+
+def _jours(debut, fin):
+    d = debut
+    while d <= fin:
+        yield d
+        d += timedelta(days=1)
+
+
+def test_un_cache_de_probabilites_perime_est_detecte():
+    """Un seuil choisi sur les probabilites d'un autre modele ne veut rien dire.
+
+    Troisieme incarnation de la meme lecon : le format du modele, la structure de ses
+    attributs, et maintenant le cache de probabilites. A chaque fois, le controle qui
+    reposait sur la memoire de celui qui modifie n'a rien vu venir.
+    """
+    import analyse_seuils
+
+    with tempfile.TemporaryDirectory() as tmp:
+        chemin = Path(tmp) / "probs.npz"
+        assert analyse_seuils.cache_perime(chemin)[0], "un cache absent doit etre perime"
+
+        # Un cache ecrit avec la configuration courante est accepte...
+        np.savez(chemin, signature=np.array(analyse_seuils.signature()))
+        perime, raison = analyse_seuils.cache_perime(chemin)
+        assert not perime, raison
+
+        # ...et cesse de l'etre des qu'un reglage du modele bouge.
+        avant = config.FORCE_QUOTA_ROUGE
+        try:
+            config.FORCE_QUOTA_ROUGE = not avant
+            perime, raison = analyse_seuils.cache_perime(chemin)
+            assert perime, "un changement de configuration doit perimer le cache"
+            assert raison, "la raison doit etre lisible"
+        finally:
+            config.FORCE_QUOTA_ROUGE = avant
+
+        # Un cache d'avant ce controle n'a pas de signature : perime lui aussi.
+        np.savez(chemin, autre=np.array([1.0]))
+        assert analyse_seuils.cache_perime(chemin)[0]
+
+
+def test_le_dossier_des_rapports_se_cree_tout_seul():
+    """`reports/` n'existe pas sur un runner neuf, et numpy ne le cree pas.
+
+    Un script a calcule cinq saisons -- six minutes -- avant d'echouer sur son
+    `np.savez` final, faute de dossier parent. Deux scripts ecrivaient au meme endroit,
+    l'un creant le dossier et l'autre non ; c'est celui qui ne le creait pas qui
+    tournait en premier. Passer par `config.reports_path` rend l'oubli impossible.
+    """
+    ancien = config.REPORTS_DIR
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            config.REPORTS_DIR = Path(tmp) / "absent" / "reports"
+            assert not config.REPORTS_DIR.exists()
+            chemin = config.reports_path("essai.npz")
+            assert chemin.parent.is_dir(), "le dossier aurait du etre cree"
+            # Et l'ecriture reelle doit passer, pas seulement le mkdir.
+            np.savez(chemin, x=np.array([1.0]))
+            assert chemin.exists()
+        finally:
+            config.REPORTS_DIR = ancien

@@ -59,7 +59,8 @@ Tout est calé sur les seules données antérieures à la saison évaluée, sino
 se mentirait à lui-même.
 
 Gain mesuré sur 5 saisons, à seuil identique : 79,8 → **86,8 jours Rouge anticipés sur
-110**, sans perte de précision. Les cinq saisons progressent.
+110**, sans perte de précision. Les cinq saisons progressent. Depuis, la contrainte de
+quota a porté ce chiffre à **92,2 sur 110**.
 
 ## Mise en ligne (GitHub Pages)
 
@@ -98,20 +99,51 @@ tombe dedans.
 
 ## Le seuil d'alerte Rouge est un arbitrage, pas un réglage
 
-Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré sur 5 saisons :
+Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré sur
+5 saisons, **sur les jours où le Rouge est possible** :
 
-| Seuil | Rouges détectés | Fausses alertes / échéance / hiver | Précision |
-|---|---|---|---|
-| 0,10 | 90 % | 22 | 54 % |
-| **0,25** (retenu) | **79 %** | **13** | **64 %** |
-| 0,30 | 76 % | 11 | 66 % |
-| 0,50 | 61 % | 5 | 75 % |
+| Seuil | Rappel | Précision | Pire saison : précision | Pire saison : rappel | Fausses / échéance / hiver |
+|---|---|---|---|---|---|
+| 0,10 | 92 % | 55 % | 27 % | 65 % | 22,6 |
+| **0,25** (retenu) | **84 %** | **67 %** | **42 %** | **48 %** | **11,9** |
+| 0,30 | 81 % | 70 % | 48 % | 45 % | 9,8 |
+| **0,40** (retenu) | **76 %** | **75 %** | **57 %** | **45 %** | **6,9** |
+| 0,50 | 72 % | 81 % | 62 % | 45 % | 4,8 |
+| 0,65 | 62 % | 90 % | 75 % | 42 % | 2,0 |
 
-Réglable dans `config.ROUGE_ALERT_THRESHOLD`. **Ce tableau est à refaire** : il a été
-produit alors qu'`analyse_seuils.py` n'appelait pas `fit_demand_model`, et toutes les
-colonnes de charge résiduelle y sortaient donc vides. Le script est corrigé, les chiffres
-ci-dessus datent d'avant. Pour le régénérer : `python analyse_seuils.py` (instantané, relit des probabilités mises en cache ;
-`--refit` pour les recalculer).
+Deux colonnes méritent d'être lues ensemble. **Le rappel de la pire saison ne bouge
+pratiquement plus entre 0,30 et 0,55** — il reste à 45 % — pendant que la précision de
+cette même saison passe de 48 % à 67 %. Autrement dit, au-delà de 0,30, monter le seuil
+ne coûte presque rien là où le modèle est le plus faible, et rapporte beaucoup. C'est ce
+qui a fait retenir **0,40** plutôt que 0,25 : un jour Rouge de moins repéré par hiver,
+contre une vingtaine de journées d'organisation inutile évitées.
+
+Le contrepoint honnête : en euros, 0,25 reste l'optimum si une alerte inutile ne coûte
+qu'un euro de gêne (`analyse_euros.py`). Le choix de 0,40 sacrifie donc quelques euros
+par saison, délibérément — une alerte juste 42 % du temps finit par être ignorée, et une
+alerte ignorée ne vaut rien.
+
+Le détail par saison dit d'où vient la moyenne :
+
+| Saison | Détectés | Fausses alertes | Rappel | Précision |
+|---|---|---|---|---|
+| 2021-2022 | 19,9/22 | 7,3 | 90 % | 73 % |
+| 2022-2023 | 21,5/22 | 9,5 | 98 % | 69 % |
+| 2023-2024 | 10,5/22 | 1,4 | 48 % | 88 % |
+| 2024-2025 | 18,3/22 | 11,4 | 83 % | 62 % |
+| 2025-2026 | 22,0/22 | **30,0** | 100 % | 42 % |
+| **Total** | **92,2/110** | 11,9 | **84 %** | **67 %** |
+
+(Détail mesuré au seuil 0,25, celui qui était en place lors du balayage.)
+
+Les deux hivers extrêmes sont instructifs. En 2023-2024 le modèle est prudent et rate
+la moitié des Rouge ; en 2025-2026 il les trouve **tous**, au prix de trente fausses
+alertes — c'est la saison où treize jours de mars sont Rouge par arithmétique, et la
+contrainte de quota l'y pousse.
+
+Régénérer le tableau : `python analyse_seuils.py`. Le cache de probabilités se périme
+tout seul si la configuration du modèle a changé depuis, `--refit` n'a pas à être
+demandé de mémoire.
 
 Un calage automatique de ce seuil a été essayé — sur une saison de validation, puis sur
 plusieurs mises en commun. Les deux fois il s'effondrait au plancher et noyait la page sous
@@ -127,19 +159,19 @@ eux est l'information :
 
 | Période | Prédictions | Réussite | Ce qu'elle contient |
 |---|---|---|---|
-| Toute l'année | 14 610 | 88,6 % | flatteur — inclut les mois sans enjeu |
-| Novembre → mars | 6 050 | 76,7 % | la fenêtre où un Rouge est possible |
-| **Jours éligibles** | **4 190** | **69,3 %** | lundi-vendredi, nov-mars, hors fériés |
+| Toute l'année | 14 614 | 89,6 % | flatteur — inclut les mois sans enjeu |
+| Novembre → mars | 6 050 | 78,6 % | la fenêtre où un Rouge est possible |
+| **Jours éligibles** | **4 190** | **72,2 %** | lundi-vendredi, nov-mars, hors fériés |
 
-Presque 20 points d'écart entre le premier chiffre et le dernier. C'est sur le dernier que
+Plus de 18 points d'écart entre le premier chiffre et le dernier. C'est sur le dernier que
 le modèle a réellement un choix à faire.
 
 Ce dénominateur corrige aussi une lecture erronée. La précision paraissait *plate* d'une
-échéance à l'autre — 90,0 % à J+1 contre 88,0 % à J+10 — ce qui laissait croire que le
+échéance à l'autre — 91,2 % à J+1 contre 88,7 % à J+10 — ce qui laissait croire que le
 modèle n'exploitait pas la précision des prévisions courtes. Sur les jours éligibles la
-pente apparaît : **73,3 % à J+1 contre 67,1 % à J+10**, soit trois fois plus. La platitude
+pente apparaît : **77,3 % à J+1 contre 69,2 % à J+10**, soit trois fois plus. La platitude
 venait pour l'essentiel du dénominateur, pas du modèle. Le rappel Rouge, lui, reste bien
-plat (73 % à J+1, 74 % à J+10) : cette part de l'anomalie tient toujours.
+plat (76 % à J+1, 72 % à J+10) : cette part de l'anomalie tient toujours.
 
 ## Ce que ça rapporte, en euros
 

@@ -112,6 +112,7 @@ apparaît et 2023-2024 passe de 1,053 à 0,809.
 | Pondérer l'entraînement vers l'hiver | 2024-2025 : 0,638 → **0,720** | écarté |
 | Ensemble sans diversification | strictement identique | écarté (voir ci-dessus) |
 | Modèle à deux étages (tendu ? puis Blanc ou Rouge ?) | moyenne 0,670 → 0,709, **pire saison 0,902 → 1,104** | écarté |
+| Arbitrage Blanc/Rouge (`quota_arbitrage`) | rappel Blanc 44 → 46 %, **pire saison 0,911 → 0,942** | écarté |
 
 **Leçon de méthode.** J'ai d'abord conclu du contraire pour le nucléaire, à partir
 d'une mesure de permutation. Permuter une colonne sur un modèle **déjà entraîné** ne
@@ -194,20 +195,195 @@ Il rapporte tout de même **+3 points de précision d'alerte** (65 % → 68 %) c
 sûres y gagnerait ; celui qui veut ne pas rater un Rouge y perd. Le plancher décidant
 ici, `config.TWO_STAGE` reste à `False`.
 
-## Pistes non explorées
+## Le Blanc : la faiblesse qui reste
 
-- **`blanc_pressure` est calculé sur un mauvais dénominateur** : les jours restants de
-  la saison entière (jusqu'au 31 août), alors que `rouge_pressure` utilise la fenêtre
-  hivernale. Les deux ne sont pas comparables, et leur *rapport* — quel quota est le
-  plus rare en ce moment — est justement l'arbitrage Blanc/Rouge. Défaut probable.
-- **La prévision RTE J+1 n'a jamais été mesurée équitablement** : elle n'existe qu'à
-  une échéance sur dix, donc permuter sa colonne ne touche que 10 % des lignes. Il
-  faudrait la mesurer à J+1 seulement.
-- **Le seuil d'alerte n'a pas été recalé** depuis la contrainte de quota, ni sur la
-  courbe en euros (`analyse_euros.py`).
-- **Le tableau des seuils du README est périmé** : produit quand `analyse_seuils.py`
-  n'appelait pas `fit_demand_model`, donc avec toutes les colonnes de charge
-  résiduelle à NaN.
+C'est la seule couleur sous les 50 %, et de loin :
+
+| Réel | Bleu | Blanc | Rouge | rappel |
+|---|---|---|---|---|
+| Bleu | 1699 | 242 | 149 | 81 % |
+| **Blanc** | **304** | **552** | **364** | **45 %** |
+| Rouge | 52 | 105 | 723 | 82 % |
+
+**L'erreur se partage en deux moitiés presque égales** : 30 % des Blanc sont annoncés
+Rouge, mais 25 % sont annoncés **Bleu**. Ce n'est donc pas seulement une hésitation
+avec le Rouge — c'était une lecture trop rapide, faite en ne regardant que les fausses
+alertes. Une piste qui ne viserait que la frontière Blanc/Rouge peut corriger une
+moitié en aggravant l'autre, d'où l'affichage des deux directions dans le comparatif.
+
+### L'arbitrage entre les deux quotas : mesuré, écarté
+
+`rouge_pressure` compte le quota restant sur les jours **éligibles** jusqu'au 31 mars ;
+`blanc_pressure` le comptait sur les jours de **calendrier** jusqu'au 31 août. Au
+13 mars 2026 : 13 jours d'un côté, 147 de l'autre. Leur rapport — quel quota est le
+plus rare aujourd'hui — ne voulait donc rien dire.
+
+Mesuré sur une fenêtre commune, il fait exactement ce pour quoi il est conçu, et ça ne
+suffit pas :
+
+| | rappel B | B vu Bleu | B vu Rouge | pire saison |
+|---|---|---|---|---|
+| sans arbitrage | 44 % | 25 % | 31 % | **0,911** |
+| avec arbitrage | **46 %** | 24 % | 30 % | 0,942 |
+
+Les deux directions d'erreur reculent ensemble — le signal est donc réel — mais
+2023-2024 passe de 0,846 à 0,942, et le rappel Rouge perd deux points. Deux points de
+Blanc contre le plancher : refusé. Même profil que le modèle à deux étages.
+
+### La correction du dénominateur, elle, est conservée
+
+Aucun Blanc ne peut tomber un dimanche ; les compter était faux. Mais il faut savoir ce
+que cette correction vaut : **corrélation de rang 0,999992** entre l'ancienne et la
+nouvelle définition, et l'ordre de deux jours ne s'inverse que dans **0,19 %** des cas.
+Un arbre ne voit que l'ordre — la correction est donc juste et pratiquement sans effet.
+
+Ce chiffre sert surtout à ne pas se tromper de cause : le plancher a bougé de 0,902 à
+0,911 entre deux mesures, et ce n'est **pas** ce changement qui l'explique. Les deux
+runs ne tournaient pas sur la même base (la consommation avait été recollectée entre
+les deux). Deux mesures prises sur des données différentes ne se comparent pas.
+
+## La prévision de RTE : mesurée à son échéance, sans valeur
+
+Elle est publiée la veille pour le lendemain, donc elle n'existe **qu'à J+1**. La
+permutation la jugeait pourtant sur les dix échéances, où elle est NaN neuf fois sur
+dix : détruire sa colonne ne touchait qu'un dixième des lignes, et elle sortait
+mécaniquement en poids mort. **Le verdict portait sur sa rareté, pas sur sa valeur.**
+
+Mesurée à J+1 seulement, la réponse ne change pas :
+
+| | +log-loss | bruit | pire saison |
+|---|---|---|---|
+| groupe « prévision RTE » | **−0,004** | 0,005 | −0,012 |
+| `rte_forecast_mw` | +0,0005 | 0,0006 | +0,0001 |
+| `rte_forecast_gap` | −0,006 | 0,004 | −0,017 |
+
+Sans valeur, cette fois pour de bon. L'explication tient au tableau voisin :
+`residual_mw` vaut **+0,110** à J+1. La consommation attendue est déjà connue par le
+modèle de demande maison, calibré sur éCO2mix — la prévision de RTE ne dit rien
+qu'il ignore. Piste close.
+
+### Ce que J+1 révèle en passant
+
+Le classement change beaucoup quand on ne regarde que l'échéance la plus fiable :
+
+| Groupe | toutes échéances | à J+1 |
+|---|---|---|
+| charge résiduelle | +0,055, **pire saison −0,094** | +0,164, **pire saison +0,024** |
+| hiver restant | +0,078, instable | +0,181, **porteur** |
+| météo brute | +0,060, instable | +0,111, indistinct |
+
+**La charge résiduelle passe d'instable à solidement porteuse.** C'est cohérent : à
+J+1 la prévision de consommation est juste, à J+10 c'est du bruit. La même colonne
+n'a pas la même valeur selon l'échéance — et le modèle unique les traite pourtant
+toutes pareil. Piste sérieuse, non explorée.
+
+## Le seuil d'alerte, recalé sous contrainte de quota
+
+Balayage sur 5 saisons, jours éligibles. Les deux colonnes de droite sont celles qui
+comptent, puisque c'est la pire saison qui décide ici :
+
+| Seuil | Rappel | Précision | Pire : précision | Pire : rappel | Fausses / éch. / hiver |
+|---|---|---|---|---|---|
+| 0,10 | 92 % | 55 % | 27 % | 65 % | 22,6 |
+| 0,25 (ancien) | 84 % | 67 % | 42 % | 48 % | 11,9 |
+| 0,30 | 81 % | 70 % | 48 % | 45 % | 9,8 |
+| **0,40** (retenu) | 76 % | 75 % | **57 %** | 45 % | 6,9 |
+| 0,50 | 72 % | 81 % | **62 %** | 45 % | 4,8 |
+| 0,65 | 62 % | 90 % | 75 % | 42 % | 2,0 |
+
+**Le rappel de la pire saison est plat de 0,30 à 0,55** — 45 % partout — pendant que sa
+précision monte de 48 % à 67 %. Au-delà de 0,30, monter le seuil ne coûte donc presque
+rien là où le modèle est le plus faible, et rapporte beaucoup.
+
+**Décision : 0,25 → 0,40.** Un jour Rouge de moins repéré par hiver, contre une
+vingtaine de journées d'organisation inutile évitées. En euros c'est un léger recul
+assumé (voir plus bas) : une alerte juste 42 % du temps finit ignorée, et une alerte
+ignorée ne vaut rien.
+
+**Effet mesuré après rejeu du backtest.** L'effet de bord attendu s'est produit, et il
+est plus large que le coût :
+
+| Sur les jours éligibles | seuil 0,25 | seuil 0,40 |
+|---|---|---|
+| Exactitude globale | 71,0 % | **72,2 %** |
+| Rappel Bleu | 81 % | 82 % |
+| **Rappel Blanc** | 45 % | **53 %** |
+| Rappel Rouge | 82 % | 74 % |
+| **Précision des alertes Rouge** | 58 % | **68 %** |
+| Nombre d'alertes Rouge | 1241 | 961 |
+
+Le gain du Blanc vient exactement d'où il était prévu : la part des Blanc annoncés Rouge
+tombe de **30 % à 20 %**, ce sont les journées que le Rouge ne vole plus. La part
+annoncée Bleu bouge à peine (25 → 27 %), ce qui confirme le mécanisme : `decide()`
+promeut le Blanc puis laisse le Rouge écraser par-dessus, et il écrase moins.
+
+Ce que je n'avais pas prévu : **l'exactitude globale monte** (71,0 → 72,2 %). Le Blanc
+étant plus fréquent que le Rouge sur les jours éligibles (30 contre 22), lui rendre
+8 points de rappel rapporte plus que les 8 points perdus sur le Rouge.
+
+Le détail par saison montre deux régimes opposés :
+
+| Saison | Détectés | Fausses alertes | Rappel | Précision |
+|---|---|---|---|---|
+| 2021-2022 | 19,9/22 | 7,3 | 90 % | 73 % |
+| 2022-2023 | 21,5/22 | 9,5 | 98 % | 69 % |
+| 2023-2024 | 10,5/22 | 1,4 | 48 % | 88 % |
+| 2024-2025 | 18,3/22 | 11,4 | 83 % | 62 % |
+| 2025-2026 | 22,0/22 | **30,0** | 100 % | 42 % |
+| **Total** | **92,2/110** | 11,9 | 84 % | 67 % |
+
+En 2023-2024 le modèle est prudent et rate la moitié des Rouge ; en 2025-2026 il les
+trouve tous, au prix de trente fausses alertes. C'est la saison des treize jours de mars
+forcés par arithmétique — la contrainte de quota l'y pousse, et c'est le prix du gain de
+rappel obtenu ailleurs.
+
+### En euros, à J+1
+
+`analyse_euros.py`, 8 kWh décalables, gain de 0,568 € par kWh un jour Rouge :
+
+| Gêne consentie / alerte inutile | Seuil optimal | € / saison | Alertes | Justes | Rouge ratés |
+|---|---|---|---|---|---|
+| 0,00 € | 0,05 | 99 € | 46 | 20 | 2 |
+| 0,50 € | 0,10 | 86 € | 40 | 20 | 2 |
+| **1,00 €** | **0,25** | 81 € | 28 | 19 | 3 |
+| 2,00 € | 0,30 | 74 € | 26 | 19 | 3 |
+| 5,00 € | 0,55 | 63 € | 18 | 16 | 6 |
+
+**Le seuil de 0,25 est exactement l'optimum si une alerte inutile vaut 1 € de gêne.**
+Il n'avait pas été choisi comme ça — c'est une confirmation indépendante, pas une
+justification rétrospective.
+
+Ce que rapporte un jour de contrainte consenti :
+
+| Stratégie | € / saison | Jours gênés | € / jour gêné |
+|---|---|---|---|
+| tout décaler, tous les jours | 185 € | 365 | 0,51 € |
+| suivre le modèle (seuil 0,25) | 90 € | 28 | 3,25 € |
+| oracle (les 22 vrais Rouge) | 100 € | 22 | 4,54 € |
+
+Le modèle capte **90 % des euros de l'oracle** pour six jours de contrainte de plus.
+
+### Le seuil Blanc
+
+| Seuil | Rappel Blanc | Précision Blanc | Bleu abîmés |
+|---|---|---|---|
+| 0,30 | 79 % | 53 % | 13,3 |
+| **0,40** (retenu) | 65 % | 57 % | 9,2 |
+| 0,50 | 52 % | 61 % | 6,2 |
+
+Rien ne pousse à en changer : la précision progresse lentement, le rappel chute vite.
+
+**Piège de lecture à connaître** : ce tableau compte les jours dont la probabilité de
+Blanc dépasse le seuil, alors que `decide()` laisse ensuite le Rouge écraser certains
+d'entre eux. Les 65 % de rappel affichés ici ne sont donc pas les 45 % réellement
+obtenus dans la matrice de confusion — l'écart, ce sont les jours Blanc volés par le
+Rouge. **Le rappel du Blanc dépend du seuil Rouge autant que du sien.**
+
+## Pistes non explorées
+- **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
+  résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
+  pareil. `horizon` est bien une colonne, mais un arbre doit alors dépenser sa capacité
+  à réapprendre cette interaction partout.
 
 ---
 
