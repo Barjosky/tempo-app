@@ -126,6 +126,17 @@ INDISPO = ["offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanne
 # evaluables, c'est de quoi surajuster. Et l'hiver 2022-2023, ou le parc s'est effondre,
 # est aussi celui ou les Rouge ont ete les plus nombreux : le modele peut apprendre
 # cette coincidence-la plutot que le mecanisme.
+#
+# MESURE, RETENU. Le plancher se releve : 0,912 -> 0,883, et le Blanc progresse dans
+# ses DEUX directions d'erreur a la fois (54 -> 57 % de rappel, 27 -> 25 % vu Bleu,
+# 20 -> 18 % vu Rouge), ce qui signale de l'information ajoutee plutot qu'un arbitrage
+# deplace. Les colonnes restent donc actives (elles ne sont pas dans EXCLUDED_FEATURES).
+#
+# Deux reserves, ecrites ici pour qu'elles ne se perdent pas. Le gain est concentre :
+# deux saisons gagnent, deux perdent, et celles qui perdent sont les deux plus faciles.
+# Surtout, 2022-2023 se DEGRADE (0,342 -> 0,359) -- l'hiver de la corrosion, celui ou
+# ces colonnes auraient du briller. Hypothese non mesuree : cet hiver-la
+# l'indisponibilite etait si generale qu'elle ne discriminait plus les jours entre eux.
 CANDIDATS = [
     ("sans le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES + INDISPO)),
     ("avec le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES)),
