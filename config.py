@@ -6,6 +6,15 @@ ROOT = Path(__file__).parent
 # publie par le site : sur le depot Pages, les deux seraient au meme endroit et
 # l'export, qui repart d'un dossier vide, effacerait la base.
 DATA_DIR = ROOT / "store"
+# Heure UTC a laquelle la collecte quotidienne tourne, et donc a laquelle la page
+# change. 10h30 UTC tombe apres l'annonce de RTE (vers 11h a Paris) toute l'annee :
+# 11h30 heure d'hiver, 12h30 heure d'ete.
+#
+# La verite de cette valeur est le `cron` du workflow, pas cette ligne -- mais la page
+# doit l'afficher et ne peut pas lire un YAML. Recopier une valeur, c'est accepter
+# qu'elle derive ; un test verrouille donc les deux ensemble.
+SCHEDULE_UTC = "10:30"
+
 REPORTS_DIR = ROOT / "reports"
 
 

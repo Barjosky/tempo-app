@@ -120,7 +120,8 @@ def forecast():
         it["tmin"] = round(w["tmin"], 1) if w else None
         it["tmax"] = round(w["tmax"], 1) if w else None
     return jsonify({"run_date": last_run, "days": items,
-                    "season": season_summary(conn), "tariffs": tariff_payload()})
+                    "season": season_summary(conn), "tariffs": tariff_payload(),
+                    "schedule_utc": config.SCHEDULE_UTC})
 
 
 @app.get("/api/history")
