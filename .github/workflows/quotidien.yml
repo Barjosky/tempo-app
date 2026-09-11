@@ -42,6 +42,10 @@ on:
         description: "Mesurer la prevision RTE a J+1 seulement, la ou elle existe (long)"
         type: boolean
         default: false
+      sonde_rte:
+        description: "Sonder l'API RTE des indisponibilites : est-elle exploitable ?"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -142,6 +146,17 @@ jobs:
       # Le seuil d'alerte n'a pas ete recale depuis la contrainte de quota, qui a
       # change les probabilites de fin d'hiver. Le cache se perime tout seul quand la
       # configuration bouge, donc `--refit` n'a pas a etre demande de memoire.
+      # A lancer AVANT de batir quoi que ce soit sur cette API : si son historique ne
+      # remonte pas assez loin, la colonne serait vide sur toutes les saisons
+      # d'entrainement et le backtest ne pourrait rien mesurer.
+      - name: Sonder l'API RTE des indisponibilites
+        if: inputs.sonde_rte == true
+        env:
+          RTE_BASIC_AUTH: ${{ secrets.RTE_BASIC_AUTH }}
+          RTE_CLIENT_ID: ${{ secrets.RTE_CLIENT_ID }}
+          RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
+        run: python sonde_rte.py
+
       - name: Recaler les seuils d'alerte
         if: inputs.seuils == true
         run: |
