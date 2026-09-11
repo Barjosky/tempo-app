@@ -102,6 +102,11 @@ ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 # Le contre-argument, qu'il faut mesurer et non supposer : deux modeles voient chacun
 # moins de lignes, et deux modeles faibles peuvent valoir moins qu'un seul entraine sur
 # tout. D'ou deux coupures testees, a J+3 et a J+5.
+# MESURE, ECARTE. Toutes les moyennes s'ameliorent et le plancher se degrade quand meme :
+# 2024-2025 gagne (0,628 -> 0,585) pendant que 2023-2024 explose (0,841 -> 1,142). Deux
+# modeles voient chacun moins de lignes, et la fragmentation coute plus que la
+# specialisation ne rapporte. L'idee de depart tient -- le froid pilote les jours Rouge,
+# mesure a J+1 -- c'est ce mecanisme-la qui ne la sert pas.
 CANDIDATS = [
     ("echeances melangees", dict(RETENU, horizon_split=None)),
     ("coupure a J+3", dict(RETENU, horizon_split=3)),

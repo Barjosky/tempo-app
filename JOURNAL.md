@@ -113,6 +113,7 @@ apparaît et 2023-2024 passe de 1,053 à 0,809.
 | Ensemble sans diversification | strictement identique | écarté (voir ci-dessus) |
 | Modèle à deux étages (tendu ? puis Blanc ou Rouge ?) | moyenne 0,670 → 0,709, **pire saison 0,902 → 1,104** | écarté |
 | Arbitrage Blanc/Rouge (`quota_arbitrage`) | rappel Blanc 44 → 46 %, **pire saison 0,911 → 0,942** | écarté |
+| Un modèle par bande d'échéance | moyennes toutes meilleures, **pire saison 0,909 → 1,028** | écarté |
 
 **Leçon de méthode.** J'ai d'abord conclu du contraire pour le nucléaire, à partir
 d'une mesure de permutation. Permuter une colonne sur un modèle **déjà entraîné** ne
@@ -261,6 +262,41 @@ Sans valeur, cette fois pour de bon. L'explication tient au tableau voisin :
 `residual_mw` vaut **+0,110** à J+1. La consommation attendue est déjà connue par le
 modèle de demande maison, calibré sur éCO2mix — la prévision de RTE ne dit rien
 qu'il ignore. Piste close.
+
+### Couper l'apprentissage par échéance : mesuré, écarté
+
+La suite logique de ce qui précède : si une colonne vaut à J+1 ce qu'elle ne vaut plus
+à J+10, donnons au modèle deux apprentissages séparés plutôt qu'un seul où il doit
+redécouvrir l'interaction dans chaque branche.
+
+| | moyenne | **pire saison** | exactitude | rappel R | préc. R | calibration |
+|---|---|---|---|---|---|---|
+| échéances mélangées | **0,681** | **0,909** | 72,1 % | 74 % | 74 % | 9,6 % |
+| coupure à J+3 | 0,757 | 1,142 | 72,6 % | 75 % | 75 % | 9,2 % |
+| coupure à J+5 | 0,730 | 1,028 | **72,7 %** | 75 % | 75 % | **9,2 %** |
+
+**Toutes les moyennes s'améliorent** — exactitude, rappel, précision, calibration — et
+pourtant c'est refusé. Le détail par saison dit pourquoi :
+
+| | 2022-2023 | 2023-2024 | 2024-2025 | 2025-2026 |
+|---|---|---|---|---|
+| mélangées | 0,345 | **0,841** | 0,628 | **0,909** |
+| coupure J+3 | 0,352 | 1,142 | **0,593** | 0,939 |
+| coupure J+5 | 0,370 | 0,939 | **0,585** | 1,028 |
+
+2024-2025 gagne nettement (0,628 → 0,585) et 2023-2024 explose (0,841 → 1,142). Deux
+modèles voient chacun moins de lignes, et la fragilité se paie sur la saison où le
+modèle était déjà le plus juste.
+
+**Ce que ça ne dit pas.** Ce n'est *pas* un démenti de l'idée que le froid pilote les
+jours Rouge — cette part reste mesurée et vraie à J+1. C'est un démenti du **mécanisme**
+choisi pour l'exploiter : séparer les jeux d'entraînement fragmente les données plus
+qu'il ne spécialise les modèles.
+
+**Piste qui reste ouverte** : une version qui ne fragmente pas. Bandes chevauchantes, ou
+un modèle unique complété d'une correction apprise sur les seules échéances courtes.
+Les moyennes disent qu'il y a quelque chose à prendre ; la pire saison dit que ce n'est
+pas comme ça.
 
 ### Ce que J+1 révèle en passant
 

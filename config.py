@@ -158,6 +158,16 @@ TWO_STAGE = False
 # tombe a +0,055 avec une pire saison a -0,094 (instable). La prevision de consommation
 # est juste a J+1 et n'est plus que du bruit a J+10 -- le modele unique traite pourtant
 # les deux pareil.
+# MESURE, ECARTE. Toutes les moyennes s'ameliorent -- exactitude 72,1 -> 72,7 %, rappel
+# et precision Rouge +1 point, calibration 9,6 -> 9,2 % -- mais 2023-2024 explose de
+# 0,841 a 1,028 (coupure J+5) ou 1,142 (coupure J+3), et le plancher passe donc de 0,909
+# a 1,028. Deux modeles voient chacun moins de lignes : la fragmentation coute plus que
+# la specialisation ne rapporte.
+#
+# Ce n'est pas un dementi de l'idee -- le froid pilote bien les jours Rouge, et la
+# charge residuelle reste porteuse a J+1 -- mais du MECANISME choisi pour l'exploiter.
+# Le code reste en place : une version qui ne fragmente pas les donnees (bandes
+# chevauchantes, ou correction apprise sur les seules echeances courtes) reste a tenter.
 HORIZON_SPLIT = None
 
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
