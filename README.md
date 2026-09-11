@@ -76,7 +76,11 @@ dépôt publié (contrainte de GitHub Pages). Le stockage interne — base SQLit
 vit dans `store/`, séparé du `data/` du site que l'export vide à chaque génération.
 
 Le PC n'a plus besoin d'être allumé : `.github/workflows/quotidien.yml` collecte, prédit
-et republie chaque jour à 10h30 UTC, après l'annonce RTE de 11h. La base et le modèle
+et republie **deux fois par jour**. Le matin à 10h30 UTC, après l'annonce RTE de 11h —
+soit 11h30 l'hiver, 12h30 l'été. Le soir à 17h00 UTC — 18h l'hiver, 19h l'été — pour
+rattraper une prévision météo qui aurait bougé depuis le matin. Un `cron` ne connaissant
+que l'UTC, l'horaire local glisse d'une heure entre les deux saisons ; la page, elle,
+affiche le prochain passage dans le fuseau du lecteur. La base et le modèle
 (23 Mo) restent hors de git, dans le cache Actions — les commiter chaque jour ferait
 grossir l'historique d'environ 2 Go par an.
 

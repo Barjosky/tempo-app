@@ -97,9 +97,11 @@ function tariffBlock(color) {
   const ratio = ratioToBleu(color);
   return `
     <div class="tariff">
-      <div class="t-row"><span>Heures pleines</span>
-        <b>${euro(t.hp)} €</b>${ratio ? `<em>${ratio}</em>` : ""}</div>
-      <div class="t-row t-hc"><span>Creuses</span><b>${euro(t.hc)} €</b></div>
+      <div class="t-main">
+        <b>${euro(t.hp)}\u202f€</b>${ratio ? `<em>${ratio}</em>` : ""}
+        <span>en heures pleines</span>
+      </div>
+      <div class="t-row t-hc"><span>Creuses</span><b>${euro(t.hc)}\u202f€</b></div>
     </div>`;
 }
 
@@ -157,7 +159,7 @@ function fillGauge(color, used, quota) {
 async function loadForecast() {
   const data = await loadJson("forecast");
   document.getElementById("run-date").textContent = data.run_date || "aucun";
-  demarrerCompteARebours(data.schedule_utc);
+  demarrerCompteARebours(data.schedules_utc);
   tariffs = data.tariffs || null;
   renderTariffGrid();
 
@@ -223,19 +225,36 @@ async function loadForecast() {
    indication, une page ouverte a 9 h et une page ouverte a 18 h se ressemblent, et
    rien ne dit laquelle est fraiche.
 
-   Deux precautions d'honnetete. L'horaire vient des donnees (config.SCHEDULE_UTC),
-   jamais d'une constante recopiee ici. Et le cron de GitHub Actions est un horaire
-   SOUHAITE, pas garanti : il part regulierement avec plusieurs minutes de retard.
-   On annonce donc « vers », et surtout on ne fait pas confiance a l'heure pour savoir
-   si la mise a jour a eu lieu -- on regarde si les donnees ont change. */
+   Deux precautions d'honnetete. Les horaires viennent des donnees
+   (config.SCHEDULES_UTC), jamais d'une constante recopiee ici. Et le cron de GitHub
+   Actions est un horaire SOUHAITE, pas garanti : il part regulierement avec plusieurs
+   minutes de retard. On annonce donc « vers », et surtout on ne fait pas confiance a
+   l'heure pour savoir si la mise a jour a eu lieu -- on regarde si les donnees ont
+   change. */
 let tickTimer = null;
 
-function prochainCalcul(hhmm) {
-  const [h, m] = hhmm.split(":").map(Number);
+/* Il y a deux passages par jour ; on vise le prochain, quel qu'il soit. */
+function prochainCalcul(horaires) {
   const now = new Date();
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
-  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-  return next;
+  const candidats = horaires.map((hhmm) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
+    if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+  });
+  return new Date(Math.min(...candidats));
+}
+
+/* Depuis combien de temps le dernier passage aurait-il du avoir lieu ? Sert a savoir
+   si l'un d'eux est en train de tourner, sans supposer lequel. */
+function depuisDernierCalcul(horaires) {
+  const now = new Date();
+  return Math.min(...horaires.map((hhmm) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
+    if (d > now) d.setUTCDate(d.getUTCDate() - 1);
+    return now - d;
+  }));
 }
 
 function dureeCourte(ms) {
@@ -244,8 +263,8 @@ function dureeCourte(ms) {
   return h ? `${h} h ${String(min % 60).padStart(2, "0")}` : `${min} min`;
 }
 
-function demarrerCompteARebours(hhmm) {
-  if (!hhmm) return;
+function demarrerCompteARebours(horaires) {
+  if (!horaires || !horaires.length) return;
   const box = document.getElementById("next-run");
   const val = document.getElementById("countdown");
   const at = document.getElementById("next-at");
@@ -253,10 +272,10 @@ function demarrerCompteARebours(hhmm) {
   box.hidden = false;
 
   const tick = () => {
-    const next = prochainCalcul(hhmm);
+    const next = prochainCalcul(horaires);
     const reste = next - new Date();
-    // Pendant le quart d'heure qui suit l'horaire, le job tourne probablement encore.
-    const vientDePasser = (24 * 3600000 - reste) < 15 * 60000;
+    // Pendant le quart d'heure qui suit un horaire, le job tourne probablement encore.
+    const vientDePasser = depuisDernierCalcul(horaires) < 15 * 60000;
     if (vientDePasser) {
       box.dataset.state = "running";
       val.textContent = "en cours";

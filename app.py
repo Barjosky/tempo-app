@@ -121,7 +121,7 @@ def forecast():
         it["tmax"] = round(w["tmax"], 1) if w else None
     return jsonify({"run_date": last_run, "days": items,
                     "season": season_summary(conn), "tariffs": tariff_payload(),
-                    "schedule_utc": config.SCHEDULE_UTC})
+                    "schedules_utc": config.SCHEDULES_UTC})
 
 
 @app.get("/api/history")
