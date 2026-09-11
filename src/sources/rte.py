@@ -131,8 +131,12 @@ def arrets(debut, fin, fuel=None, date_type="EVENT_DATE"):
     out, suite = [], None
     while True:
         params = {
-            "start_date": debut.strftime("%Y-%m-%dT00:00:00+02:00"),
-            "end_date": fin.strftime("%Y-%m-%dT00:00:00+02:00"),
+            # RTE refuse un decalage horaire explicite (« +02:00 ») et n'accepte que
+            # le suffixe Z : UNADINFO_GENUN_F03, « does not follow the format
+            # described in the user guide ». Mesure faite, pas supposee. En UTC les
+            # dates sont d'ailleurs sans ambiguite d'une saison a l'autre.
+            "start_date": debut.strftime("%Y-%m-%dT00:00:00Z"),
+            "end_date": fin.strftime("%Y-%m-%dT00:00:00Z"),
             "date_type": date_type,
             "last_version": "true",
             "fuel_type": fuel,

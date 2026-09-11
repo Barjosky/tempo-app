@@ -43,9 +43,12 @@ def appel(titre, **params):
 
 
 def iso(d, h=0):
-    """RTE veut un decalage horaire explicite ; +02:00 l'ete, +01:00 l'hiver."""
-    dec = "+02:00" if 3 < d.month < 11 else "+01:00"
-    return f"{d:%Y-%m-%d}T{h:02d}:00:00{dec}"
+    """Le seul format que RTE accepte : suffixe Z, pas de decalage explicite.
+
+    Mesure par l'echelle de cette sonde : « +02:00 » est refuse (UNADINFO_GENUN_F03),
+    « Z » passe, la date nue est refusee aussi.
+    """
+    return f"{d:%Y-%m-%d}T{h:02d}:00:00Z"
 
 
 def main():
@@ -70,7 +73,7 @@ def main():
 
     if ok is None:
         print("\n  Meme les dates seules sont refusees : le format de date est en cause.")
-        for var, lib in (("%Y-%m-%dT%H:%M:%SZ", "suffixe Z (UTC)"),
+        for var, lib in (("%Y-%m-%dT%H:%M:%S+02:00", "decalage explicite"),
                          ("%Y-%m-%d", "date nue")):
             appel(f"format : {lib}",
                   start_date=a.strftime(var), end_date=b.strftime(var))
