@@ -285,15 +285,25 @@ comptent, puisque c'est la pire saison qui décide ici :
 | Seuil | Rappel | Précision | Pire : précision | Pire : rappel | Fausses / éch. / hiver |
 |---|---|---|---|---|---|
 | 0,10 | 92 % | 55 % | 27 % | 65 % | 22,6 |
-| **0,25** (retenu) | 84 % | 67 % | 42 % | 48 % | 11,9 |
+| 0,25 (ancien) | 84 % | 67 % | 42 % | 48 % | 11,9 |
 | 0,30 | 81 % | 70 % | 48 % | 45 % | 9,8 |
-| 0,40 | 76 % | 75 % | 57 % | 45 % | 6,9 |
+| **0,40** (retenu) | 76 % | 75 % | **57 %** | 45 % | 6,9 |
 | 0,50 | 72 % | 81 % | **62 %** | 45 % | 4,8 |
 | 0,65 | 62 % | 90 % | 75 % | 42 % | 2,0 |
 
 **Le rappel de la pire saison est plat de 0,30 à 0,55** — 45 % partout — pendant que sa
 précision monte de 48 % à 67 %. Au-delà de 0,30, monter le seuil ne coûte donc presque
 rien là où le modèle est le plus faible, et rapporte beaucoup.
+
+**Décision : 0,25 → 0,40.** Un jour Rouge de moins repéré par hiver, contre une
+vingtaine de journées d'organisation inutile évitées. En euros c'est un léger recul
+assumé (voir plus bas) : une alerte juste 42 % du temps finit ignorée, et une alerte
+ignorée ne vaut rien.
+
+Effet de bord attendu, non encore mesuré : `decide()` promeut le Blanc puis laisse le
+Rouge écraser par-dessus. Un seuil Rouge plus haut rend donc des journées au Blanc, dont
+le rappel réel (45 %) était la faiblesse principale. Le sens est certain — c'est de
+l'arithmétique, il y a strictement moins d'écrasements — l'ampleur ne l'est pas.
 
 Le détail par saison montre deux régimes opposés :
 
@@ -346,6 +356,12 @@ Le modèle capte **90 % des euros de l'oracle** pour six jours de contrainte de 
 | 0,50 | 52 % | 61 % | 6,2 |
 
 Rien ne pousse à en changer : la précision progresse lentement, le rappel chute vite.
+
+**Piège de lecture à connaître** : ce tableau compte les jours dont la probabilité de
+Blanc dépasse le seuil, alors que `decide()` laisse ensuite le Rouge écraser certains
+d'entre eux. Les 65 % de rappel affichés ici ne sont donc pas les 45 % réellement
+obtenus dans la matrice de confusion — l'écart, ce sont les jours Blanc volés par le
+Rouge. **Le rappel du Blanc dépend du seuil Rouge autant que du sien.**
 
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge

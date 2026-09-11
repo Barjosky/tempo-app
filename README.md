@@ -107,14 +107,21 @@ Annoncer un jour Rouge est un compromis entre en rater et en inventer. Mesuré s
 | 0,10 | 92 % | 55 % | 27 % | 65 % | 22,6 |
 | **0,25** (retenu) | **84 %** | **67 %** | **42 %** | **48 %** | **11,9** |
 | 0,30 | 81 % | 70 % | 48 % | 45 % | 9,8 |
-| 0,40 | 76 % | 75 % | 57 % | 45 % | 6,9 |
+| **0,40** (retenu) | **76 %** | **75 %** | **57 %** | **45 %** | **6,9** |
 | 0,50 | 72 % | 81 % | 62 % | 45 % | 4,8 |
 | 0,65 | 62 % | 90 % | 75 % | 42 % | 2,0 |
 
 Deux colonnes méritent d'être lues ensemble. **Le rappel de la pire saison ne bouge
 pratiquement plus entre 0,30 et 0,55** — il reste à 45 % — pendant que la précision de
 cette même saison passe de 48 % à 67 %. Autrement dit, au-delà de 0,30, monter le seuil
-ne coûte presque rien là où le modèle est le plus faible, et rapporte beaucoup.
+ne coûte presque rien là où le modèle est le plus faible, et rapporte beaucoup. C'est ce
+qui a fait retenir **0,40** plutôt que 0,25 : un jour Rouge de moins repéré par hiver,
+contre une vingtaine de journées d'organisation inutile évitées.
+
+Le contrepoint honnête : en euros, 0,25 reste l'optimum si une alerte inutile ne coûte
+qu'un euro de gêne (`analyse_euros.py`). Le choix de 0,40 sacrifie donc quelques euros
+par saison, délibérément — une alerte juste 42 % du temps finit par être ignorée, et une
+alerte ignorée ne vaut rien.
 
 Le détail par saison dit d'où vient la moyenne :
 
@@ -126,6 +133,8 @@ Le détail par saison dit d'où vient la moyenne :
 | 2024-2025 | 18,3/22 | 11,4 | 83 % | 62 % |
 | 2025-2026 | 22,0/22 | **30,0** | 100 % | 42 % |
 | **Total** | **92,2/110** | 11,9 | **84 %** | **67 %** |
+
+(Détail mesuré au seuil 0,25, celui qui était en place lors du balayage.)
 
 Les deux hivers extrêmes sont instructifs. En 2023-2024 le modèle est prudent et rate
 la moitié des Rouge ; en 2025-2026 il les trouve **tous**, au prix de trente fausses

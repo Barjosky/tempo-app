@@ -151,21 +151,51 @@ PERIODS = {
     "eligibles": "jours ou le Rouge est possible",  # + lundi-vendredi, hors feries
 }
 
-# Seuil au-dela duquel un jour est annonce Rouge. C'est un arbitrage, pas un
-# reglage technique : mesure sur 5 saisons (voir analyse_seuils.py)
-#   0.10 -> 90% des Rouge detectes, ~22 fausses alertes / echeance / hiver
-#   0.25 -> 79% detectes, ~13 fausses alertes   <- choix retenu
-#   0.30 -> 76% detectes, ~11 fausses alertes
-#   0.50 -> 61% detectes, ~5 fausses alertes
+# Seuil au-dela duquel un jour est annonce Rouge. C'est un arbitrage, pas un reglage
+# technique. Mesure sur 5 saisons, sur les jours ou le Rouge est possible :
+#
+#   seuil  rappel  precision   PIRE saison : precision / rappel   fausses/echeance/hiver
+#    0.10    92 %      55 %            27 %  /  65 %                    22,6
+#    0.25    84 %      67 %            42 %  /  48 %                    11,9
+#    0.40    76 %      75 %            57 %  /  45 %                     6,9   <- retenu
+#    0.50    72 %      81 %            62 %  /  45 %                     4,8
+#    0.65    62 %      90 %            75 %  /  42 %                     2,0
+#
+# Ce qui a decide : le rappel de la PIRE saison est plat de 0,30 a 0,55 -- 45 % partout
+# -- pendant que sa precision monte de 48 % a 67 %. Au-dela de 0,30, monter le seuil ne
+# coute donc presque rien la ou le modele est deja le plus faible, et rapporte beaucoup.
+# En 2025-2026 le seuil de 0,25 produisait TRENTE fausses alertes pour 42 % de justesse :
+# une alerte a laquelle on ne croit plus ne sert a rien.
+#
+# Le contrepoint honnete : en euros, 0,25 est l'optimum si une alerte inutile ne coute
+# qu'un euro de gene (analyse_euros.py). Passer a 0,40 coute donc quelques euros par
+# saison, deliberement, contre une vingtaine de journees de contrainte inutile en moins.
+#
+# Effet de bord voulu : `decide()` promeut le Blanc puis laisse le Rouge ecraser
+# par-dessus. Un seuil Rouge plus haut rend donc des journees au Blanc, dont le rappel
+# etait la faiblesse principale.
+#
 # Pour changer de point de fonctionnement : modifier cette valeur, puis
 # `python analyse_seuils.py` pour revoir le tableau complet.
-ROUGE_ALERT_THRESHOLD = 0.25
+ROUGE_ALERT_THRESHOLD = 0.40
 
-# Meme arbitrage pour le Blanc. Sans ce seuil le Blanc ne l'emporte que par argmax,
-# et il ne pese que ~12 % des jours contre 82 % de Bleu : il ne gagne donc presque
-# jamais, d'ou un rappel Blanc mesure a 39 % sur le backtest. Le cout d'un Blanc
-# manque reste faible (heure pleine +16 % contre +341 % pour un Rouge), d'ou un seuil
-# nettement moins agressif que celui du Rouge. `python analyse_seuils.py` balaye les deux.
+# Meme arbitrage pour le Blanc. Sans ce seuil il ne l'emporte que par argmax, et il ne
+# pese que ~12 % des jours contre 82 % de Bleu : il ne gagne donc presque jamais.
+#
+#   seuil  rappel  precision   jours Bleu abimes / echeance / hiver
+#    0.30    79 %      53 %            13,3
+#    0.40    65 %      57 %             9,2   <- retenu
+#    0.50    52 %      61 %             6,2
+#    0.60    37 %      65 %             3,5
+#
+# Rien ne pousse a en changer : la precision progresse lentement quand le rappel chute
+# vite. Le cout d'un Blanc manque reste d'ailleurs faible -- heure pleine +16 % contre
+# +341 % pour un Rouge -- ce qui justifie un seuil moins agressif que celui du Rouge.
+#
+# ATTENTION a la lecture de ces chiffres : ils comptent les jours dont la probabilite
+# de Blanc depasse le seuil, alors que `decide()` laisse ensuite le Rouge ecraser
+# certains d'entre eux. Le rappel Blanc REELLEMENT obtenu est donc plus bas que celui
+# du tableau, et il depend du seuil Rouge autant que de celui-ci.
 BLANC_ALERT_THRESHOLD = 0.40
 
 # Dossier du site. En local il est range dans web/ ; sur le depot publie par GitHub
