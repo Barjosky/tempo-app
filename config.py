@@ -61,6 +61,12 @@ TARIFFS = {
 SEASON_START_MONTH = 9
 FIRST_SEASON = 2020  # profondeur de l'historique disponible via l'API
 
+# Puissance nucleaire installee en France, en MW (56 reacteurs depuis l'arret de
+# Fessenheim en 2020, soit toute la periode couverte par la base). Sert de reference
+# a `margin_rte_mw` : disponible = installe - annonce a l'arret. La valeur exacte
+# importe peu, elle est constante et le modele ne lit que des ecarts.
+NUCLEAR_INSTALLED_MW = 61370
+
 # Fenetre ou les jours Rouge sont possibles (1er nov -> 31 mars)
 ROUGE_WINDOW = ((11, 1), (3, 31))
 

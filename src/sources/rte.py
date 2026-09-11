@@ -94,7 +94,10 @@ def jeton():
 
 def _get(chemin, params, retries=3):
     """Une page de resultats. Rend (donnees, jeton_de_continuation)."""
-    qs = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    # `_suite` est interne : RTE attend le jeton de continuation dans un EN-TETE, et
+    # refuse tout parametre de requete qu'il ne connait pas.
+    qs = urllib.parse.urlencode({k: v for k, v in params.items()
+                                 if v is not None and not k.startswith("_")})
     for essai in range(retries):
         try:
             entetes = {"Authorization": f"Bearer {jeton()}",
@@ -119,12 +122,18 @@ def _get(chemin, params, retries=3):
             time.sleep(3 * (essai + 1))
 
 
-def arrets(debut, fin, fuel=None, date_type="EVENT_DATE"):
-    """Indisponibilites de production chevauchant [debut, fin].
+def arrets(debut, fin, fuel=None, date_type="EVENT_DATE", derniere_version=True):
+    """Indisponibilites de production, dans la fenetre [debut, fin].
 
-    `date_type` decide du sens de la fenetre : EVENT_DATE pour les arrets qui ont lieu
-    dans la periode, PUBLICATION_DATE pour ceux qui y ont ete DECLARES -- c'est ce
-    second mode qui permet de reconstituer ce qu'on savait a une date donnee.
+    `date_type` decide du sens de la fenetre : EVENT_DATE pour les arrets qui ont LIEU
+    dans la periode, PUBLICATION_DATE pour ceux qui y ont ete DECLARES.
+
+    `derniere_version` est le parametre qui decide de l'honnetete d'un backtest. A vrai,
+    RTE ne rend que l'etat FINAL de chaque arret -- corrige, prolonge, parfois annule
+    apres coup. Reconstituer le passe avec ca ferait entrer du futur dans les features.
+    Pour la collecte historique on le met donc a faux et on garde toutes les versions,
+    chacune avec sa date de publication ; c'est au moment de construire les features
+    qu'on choisit la plus recente publiee AVANT la date de prediction.
     """
     if not disponible():
         return []
@@ -138,7 +147,7 @@ def arrets(debut, fin, fuel=None, date_type="EVENT_DATE"):
             "start_date": debut.strftime("%Y-%m-%dT00:00:00Z"),
             "end_date": fin.strftime("%Y-%m-%dT00:00:00Z"),
             "date_type": date_type,
-            "last_version": "true",
+            "last_version": "true" if derniere_version else "false",
             "fuel_type": fuel,
             "_suite": suite,
         }
@@ -146,3 +155,55 @@ def arrets(debut, fin, fuel=None, date_type="EVENT_DATE"):
         out += (payload or {}).get("generation_unavailabilities", [])
         if not suite:
             return out
+
+
+def _jour(texte):
+    """Le jour calendaire d'un horodatage RTE, en ISO. None si absent ou illisible."""
+    if not texte:
+        return None
+    return texte[:10] if len(texte) >= 10 and texte[4] == "-" else None
+
+
+def paliers(evenement, fetched_at=""):
+    """Aplati un arret en lignes de base : un palier de puissance = une ligne.
+
+    Un arret long ne retire pas la meme puissance du premier au dernier jour. RTE le dit
+    dans `values` ; s'en tenir a (start_date, end_date, puissance maximale) surestimerait
+    la puissance perdue sur toute la duree. Sans `values`, on retombe sur la fenetre
+    entiere et sur la puissance installee, faute de mieux.
+    """
+    ident = evenement.get("identifier")
+    pub = _jour(evenement.get("publication_date"))
+    if not ident or not pub:
+        # Sans date de publication, la ligne est inutilisable en point-in-time : on ne
+        # saurait pas a partir de quand elle etait connue. La jeter vaut mieux que de
+        # lui inventer une date.
+        return []
+    installee = evenement.get("affected_asset_or_unit_installed_capacity")
+    commun = {
+        "identifier": ident,
+        "version": int(evenement.get("version") or 0),
+        "publication_date": pub,
+        "fuel_type": evenement.get("fuel_type"),
+        "unavailability_type": evenement.get("unavailability_type"),
+        "event_status": evenement.get("event_status"),
+        "unit_name": evenement.get("affected_asset_or_unit_name"),
+        "installed_mw": float(installee) if installee is not None else None,
+        "fetched_at": fetched_at,
+    }
+    lignes, vus = [], set()
+    for v in (evenement.get("values") or []):
+        debut, fin = _jour(v.get("start_date")), _jour(v.get("end_date"))
+        indispo = v.get("unavailable_capacity")
+        if not debut or not fin or indispo is None or debut in vus:
+            continue
+        vus.add(debut)
+        lignes.append(dict(commun, palier_start=debut, palier_end=fin,
+                           unavailable_mw=float(indispo)))
+    if lignes:
+        return lignes
+    debut, fin = _jour(evenement.get("start_date")), _jour(evenement.get("end_date"))
+    if not debut or not fin:
+        return []
+    return [dict(commun, palier_start=debut, palier_end=fin,
+                 unavailable_mw=commun["installed_mw"])]

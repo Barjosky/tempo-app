@@ -65,9 +65,11 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 #   le plancher), ponderation vers l'hiver (degrade 2024-2025), ensemble sans
 #   diversification (strictement sans effet).
 RETENU = dict(excluded=config.EXCLUDED_FEATURES, force_quota=True,
-              n_seeds=5, two_stage=False)
+              n_seeds=5, two_stage=False, horizon_split=None)
 
 ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
+INDISPO = ["offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanned_mw",
+           "offline_total_mw", "margin_rte_mw"]
 
 # La cible du jour est le Blanc, seule couleur sous les 50 % de rappel : 45 %, contre
 # 81 % pour le Bleu et 82 % pour le Rouge. Son erreur se partage en deux moities
@@ -107,10 +109,26 @@ ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 # modeles voient chacun moins de lignes, et la fragmentation coute plus que la
 # specialisation ne rapporte. L'idee de depart tient -- le froid pilote les jours Rouge,
 # mesure a J+1 -- c'est ce mecanisme-la qui ne la sert pas.
+#
+# CE QUI EST MESURE ICI : le calendrier d'indisponibilites publie par RTE.
+#
+# Tout le cote offre du modele etait jusqu'ici RETROSPECTIF. `nuclear_recent_mw` lit ce
+# que le parc a produit les quatorze derniers jours : si douze reacteurs s'arretent
+# mardi, la colonne l'apprend mardi, jamais avant. Or la question posee est « que se
+# passera-t-il dans dix jours ». Un proxy du passe ne peut pas y repondre, et ces
+# colonnes-la ont d'ailleurs mesure NEGATIF au diagnostic de permutation.
+#
+# Le calendrier RTE, lui, est de l'information sur le futur : les arrets programmes sont
+# publies des mois a l'avance, les fortuits des leur declaration. La marge devient alors
+# previsionnelle des DEUX cotes -- une demande prevue face a une offre annoncee.
+#
+# Le contre-argument, qu'il faut mesurer : cinq colonnes de plus sur quatre saisons
+# evaluables, c'est de quoi surajuster. Et l'hiver 2022-2023, ou le parc s'est effondre,
+# est aussi celui ou les Rouge ont ete les plus nombreux : le modele peut apprendre
+# cette coincidence-la plutot que le mecanisme.
 CANDIDATS = [
-    ("echeances melangees", dict(RETENU, horizon_split=None)),
-    ("coupure a J+3", dict(RETENU, horizon_split=3)),
-    ("coupure a J+5", dict(RETENU, horizon_split=5)),
+    ("sans le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES + INDISPO)),
+    ("avec le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES)),
 ]
 
 
