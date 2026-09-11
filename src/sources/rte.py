@@ -35,6 +35,25 @@ BASE = ("https://digital.iservices.rte-france.com"
 _jeton = {"valeur": None, "expire": 0.0}
 
 
+class ErreurRTE(Exception):
+    """Refus de l'API, avec ce qu'elle en dit -- pas seulement son code."""
+
+    def __init__(self, code, corps, url=""):
+        self.code, self.corps, self.url = code, corps, url
+        super().__init__(f"HTTP {code} — {corps}")
+
+
+def _corps(e):
+    try:
+        brut = e.read().decode("utf-8", "replace").strip()
+    except Exception:
+        return "(corps illisible)"
+    try:
+        return json.dumps(json.loads(brut), ensure_ascii=False)[:600]
+    except Exception:
+        return brut[:600] or "(corps vide)"
+
+
 def identifiants():
     """Le couple client, en base64, tel que RTE l'attend dans l'en-tete Basic.
 
@@ -89,7 +108,10 @@ def _get(chemin, params, retries=3):
             # 429 : quota par seconde depasse. Les autres codes ne s'arrangeront pas
             # en reessayant -- on les laisse remonter pour qu'ils soient visibles.
             if e.code != 429 or essai == retries - 1:
-                raise
+                # RTE explique ses refus dans le CORPS de la reponse. Le laisser
+                # tomber pour ne garder que « 400 » revient a jeter le diagnostic et
+                # a deviner ensuite : l'erreur remonte donc avec son explication.
+                raise ErreurRTE(e.code, _corps(e), f"{BASE}{chemin}?{qs}") from None
             time.sleep(5 * (essai + 1))
         except Exception:
             if essai == retries - 1:
