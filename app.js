@@ -40,7 +40,15 @@ async function loadJson(endpoint, params = {}) {
     }
     staticMode = true;
   }
-  const r = await fetch(`data/${staticFile(endpoint, params)}.json`);
+  // `no-cache` force la REVALIDATION a chaque chargement : le navigateur redemande, le
+  // serveur repond 304 si rien n'a bouge, et la vraie copie sinon. Sans ca, un
+  // navigateur peut servir la prevision de la veille aussi longtemps qu'il la juge
+  // fraiche -- et c'est arrive : la page a continue d'afficher les jours dedoubles
+  // alors que le correctif etait publie depuis un quart d'heure.
+  //
+  // L'empreinte d'index.html ne couvrait que le script et la feuille de style. Elle
+  // protegeait donc tout SAUF la partie qui change deux fois par jour.
+  const r = await fetch(`data/${staticFile(endpoint, params)}.json`, { cache: "no-cache" });
   if (!r.ok) throw new Error(`donnees indisponibles : ${endpoint}`);
   return r.json();
 }
@@ -341,9 +349,13 @@ function demarrerCompteARebours(cadence, derniereMaj) {
     if (!next) return;
     box.dataset.state = "";
     if (label) label.textContent = "prochain calcul";
-    val.textContent = dureeCourte(next - new Date());
-    at.textContent = "vers " + next.toLocaleTimeString("fr-FR",
+    // L'HEURE en gros, la duree en petit -- et pas l'inverse. « 17 h 33 » pour dire
+    // « dans dix-sept heures » se lit comme « a 17 h 33 » : c'est exactement ainsi que
+    // le compteur a ete compris. La question posee est « quand ? », la reponse est donc
+    // une heure. Le « dans » devant la duree leve le reste du doute.
+    val.textContent = next.toLocaleTimeString("fr-FR",
       { hour: "2-digit", minute: "2-digit" });
+    at.textContent = "dans " + dureeCourte(next - new Date());
   };
   tick();
   clearInterval(tickTimer);
