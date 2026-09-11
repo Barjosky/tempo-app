@@ -415,6 +415,42 @@ d'entre eux. Les 65 % de rappel affichés ici ne sont donc pas les 45 % réellem
 obtenus dans la matrice de confusion — l'écart, ce sont les jours Blanc volés par le
 Rouge. **Le rappel du Blanc dépend du seuil Rouge autant que du sien.**
 
+## L'API RTE des indisponibilités : sondée avant d'être exploitée
+
+Seule source du projet qui demande une clé. Sondée avant d'écrire la moindre collecte,
+parce qu'une seule réponse pouvait tout invalider.
+
+| Question | Réponse |
+|---|---|
+| Authentification | **OK** — l'URL du jeton, absente du Swagger, était bien sur le même hôte |
+| Profondeur d'historique | **2020 → 2026, six hivers.** Suffisant |
+| Volume nucléaire | **420 arrêts sur 790** en 30 jours, toutes filières |
+| `publication_date` | **790/790 remplis.** La reconstitution point-in-time est possible |
+
+Arrêts par année (une semaine de janvier) : 387, 188, 241, 311, 372, 339, 240.
+Répartition : 662 programmés contre 128 fortuits.
+
+**Le format de date a coûté deux runs**, et la leçon n'est pas le format :
+
+| Envoyé | Réponse de RTE |
+|---|---|
+| `2026-09-11T00:00:00+02:00` | refus `UNADINFO_GENUN_F03` |
+| `2026-09-11T00:00:00Z` | **OK — 17 arrêts** |
+| `2026-09-11` | refus |
+
+La première sonde envoyait tous les paramètres d'un coup, recevait un 400, et
+concluait « API inexploitable ». Deux fautes : un 400 dit *mal formé*, pas *pas de
+données* — et surtout le code **jetait le corps de la réponse**, là où RTE explique
+son refus. Diagnostic supprimé, puis deviné à sa place. Remplacé par une échelle qui
+part de la requête nue et ajoute un paramètre à la fois.
+
+### Le piège qui reste à éviter
+
+`last_version=true` rend la **dernière** version de chaque arrêt — donc corrigée après
+coup. L'utiliser pour reconstituer le passé ferait fuiter du futur dans le backtest,
+exactement comme une prévision météo corrigée. Pour le point-in-time il faudra toutes
+les versions, et retenir la plus récente publiée **avant** la date de prédiction.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
