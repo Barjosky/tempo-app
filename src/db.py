@@ -110,6 +110,47 @@ CREATE TABLE IF NOT EXISTS unavailabilities (
 CREATE INDEX IF NOT EXISTS idx_indispo_pub ON unavailabilities(publication_date);
 CREATE INDEX IF NOT EXISTS idx_indispo_fin ON unavailabilities(palier_end);
 
+-- Heure REELLE de chaque passage de la collecte. Un cron GitHub est un horaire
+-- SOUHAITE : mesure faite sur quatre passages, il part avec 2 h 30 a 4 h de retard, et
+-- de facon reproductible. Le compte a rebours de la page ne peut donc pas se calculer
+-- sur l'horaire demande -- il tomberait a zero des heures avant que quoi que ce soit
+-- ne bouge. Cette table est la mesure a partir de laquelle il s'annonce.
+--
+-- `trigger` separe les passages REGULIERS des essais manuels : un dispatch lance a
+-- 15 h n'a rien a dire sur la cadence quotidienne et fausserait la mediane.
+-- Jamais reecrite : c'est une serie de mesures, pas un etat.
+CREATE TABLE IF NOT EXISTS runs (
+    run_datetime TEXT PRIMARY KEY,
+    run_date TEXT NOT NULL,
+    trigger TEXT
+);
+
+-- Les predictions A JOUR, une seule par (jour de calcul, jour cible).
+--
+-- La table, elle, porte `model_version` dans sa cle : reentrainer le modele un jour ou
+-- des predictions existent deja n'ecrase donc pas les anciennes, il en AJOUTE. Le
+-- 11 septembre 2026, la page affichait ainsi 21 cartes pour 10 jours, chaque date deux
+-- fois -- et, plus grave, l'historique comptait six paires (date, echeance) en double
+-- sur seize : le taux de reussite publie portait sur des lignes dedoublees.
+--
+-- Filtrer a la lecture aurait demande d'y penser dans les quatre requetes, et dans
+-- celles a venir. La vue le fait une fois pour toutes : c'est elle qu'on lit, jamais la
+-- table. Elle est RECREEE a chaque init_db (drop puis create) pour qu'une base venant
+-- du cache ne conserve pas une definition perimee.
+--
+-- Live et backtest sont dedoublonnes separement : ce sont deux series independantes,
+-- et un backtest rejoue ne doit pas masquer la prediction reellement faite ce jour-la.
+DROP VIEW IF EXISTS predictions_a_jour;
+CREATE VIEW predictions_a_jour AS
+SELECT * FROM (
+    SELECT p.*, ROW_NUMBER() OVER (
+        PARTITION BY run_date, target_date, (model_version LIKE 'backtest%')
+        ORDER BY run_datetime DESC, model_version DESC) AS rang
+    FROM predictions p)
+WHERE rang = 1;
+
+CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_date, target_date);
+
 CREATE INDEX IF NOT EXISTS idx_pred_target ON predictions(target_date);
 CREATE INDEX IF NOT EXISTS idx_days_season ON days(season);
 """
@@ -219,6 +260,24 @@ def upsert_unavailabilities(conn, rows):
         rows,
     )
     conn.commit()
+
+
+def enregistrer_passage(conn, run_datetime, run_date, declencheur):
+    conn.execute("""INSERT INTO runs (run_datetime, run_date, trigger)
+                    VALUES (?, ?, ?) ON CONFLICT(run_datetime) DO NOTHING""",
+                 (run_datetime, run_date, declencheur))
+    conn.commit()
+
+
+def passages_reguliers(conn, limite=40):
+    """Les derniers passages PROGRAMMES, du plus recent au plus ancien."""
+    tables = {r["name"] for r in
+              conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "runs" not in tables:
+        return []
+    return [r["run_datetime"] for r in conn.execute(
+        """SELECT run_datetime FROM runs WHERE trigger = 'schedule'
+           ORDER BY run_datetime DESC LIMIT ?""", (limite,))]
 
 
 def insert_predictions(conn, rows):

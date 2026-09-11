@@ -517,14 +517,61 @@ précisément celui où ces colonnes auraient dû briller. À ce stade je n'ai p
 d'explication mesurée, seulement une hypothèse : cet hiver-là, l'indisponibilité était
 si générale qu'elle ne discriminait plus les jours entre eux.
 
-### Ce qui reste à vérifier sur ces colonnes
+### Ce que contiennent vraiment ces colonnes
 
-135 913 arrêts ont rendu 135 934 paliers, soit **un pour un**. Ou bien les arrêts n'ont
-qu'un seul palier de puissance, ou bien `values` est absent de la réponse de liste et
-le repli sur la puissance **installée** surestime chaque arrêt partiel. Le backtest
-aime ces colonnes ; je ne sais pas encore exactement ce qu'elles contiennent. La
-collecte compte et affiche désormais la part de chacun — chiffre à lire au prochain
-passage complet.
+135 913 arrêts avaient rendu 135 934 paliers, soit **un pour un** : ou bien chaque
+version d'arrêt ne porte qu'un palier, ou bien `values` est absent de la réponse et le
+repli sur la puissance **installée** surestime chaque arrêt partiel. Le backtest aimait
+ces colonnes sans qu'on sache ce qu'elles contenaient.
+
+Mesure, lue en base plutôt que dans les logs de collecte :
+
+```
+136 750 paliers · 50 574 arrêts · 18 versions à plusieurs paliers
+70 % à la puissance installée entière · 0 sans puissance
+```
+
+**Ce que ça tranche.** `values` existe et est exploité : **30 % des paliers portent une
+puissance différente de la puissance installée**, ce que le repli ne peut pas produire —
+il ne sait écrire que `installed_mw`. Et aucun palier n'est muet. La granularité
+temporelle fine passe donc par les **versions** (2,7 par arrêt), pas par `values` : 18
+versions multi-paliers sur 136 750, c'est négligeable.
+
+**Ce que ça ne tranche pas.** Les 70 % restants sont ambigus : un réacteur complètement
+à l'arrêt donne légitimement indisponible = puissance installée. Le discriminant ne
+sépare pas ce cas-là du repli. Borne haute du repli : 70 % ; borne basse : 0 %. Pour
+fermer la question il faudrait marquer l'origine de chaque ligne à l'écriture — non
+fait, parce que le risque résiduel est borné (un repli surestime un arrêt *partiel*, et
+les arrêts partiels sont minoritaires dans un parc nucléaire).
+
+## Le compte à rebours annonçait une heure fausse de 2 à 4 heures
+
+Il visait le `cron` GitHub. Mesure sur les quatre passages programmés (API Actions) :
+
+| Cron demandé | Départ réel (UTC) | Retard |
+|---|---|---|
+| 10:30 → 09/09 | 14h41 | **4 h 11** |
+| 10:30 → 10/09 | 14h32 | **4 h 02** |
+| 10:30 → 11/09 | 14h30 | **4 h 00** |
+| 17:00 → 11/09 | 19h27 | **2 h 27** |
+
+Dispersion du passage du matin : **11 minutes sur trois jours**. Un retard de quatre
+heures aussi stable n'est pas un aléa de charge — c'est la cadence du service.
+
+Le compteur tombait donc à zéro, affichait « en cours » un quart d'heure, puis repartait
+vers le passage suivant, alors que rien n'avait bougé et ne bougerait pas avant des
+heures. **Un garde-fou qui repose sur une promesse que personne ne tient n'en est pas
+un** — c'est la même leçon que le numéro de version à incrémenter à la main.
+
+Corrigé par la mesure : la table `runs` enregistre l'instant réel de chaque passage,
+`src/cadence.py` en tire cron + médiane des retards, et la page annonce ça. Avec deux
+règles d'honnêteté : aucun compte à rebours tant qu'un passage n'a pas
+**3 mesures et moins de 2 h de dispersion** (on affiche alors « dernière mise à jour il
+y a X », vrai par construction) ; et passé l'heure attendue, on n'enchaîne pas sur le
+passage suivant — on annonce une mise à jour imminente et on guette les données.
+
+Les essais manuels (`workflow_dispatch`) sont exclus de la médiane : un run lancé à 3 h
+du matin n'a rien à dire sur la cadence quotidienne.
 
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge

@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config
-from src import db, rules
+from src import cadence, db, rules
 from src.sources import calendrier
 
 app = Flask(__name__, static_folder=str(config.SITE_DIR), static_url_path="")
@@ -58,6 +58,21 @@ def period_clause(period):
     return clause
 
 
+def dernier_passage(conn):
+    """Instant du dernier passage, programme ou non.
+
+    Toujours vrai, lui : meme sans cadence mesurable, la page peut annoncer « derniere
+    mise a jour il y a X ». C'est le repli honnete quand on ne sait pas promettre la
+    suivante.
+    """
+    tables = {r["name"] for r in
+              conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "runs" not in tables:
+        return None
+    row = conn.execute("SELECT MAX(run_datetime) d FROM runs").fetchone()
+    return row["d"] if row else None
+
+
 def tariff_payload():
     """Grille tarifaire servie a la page, pour afficher le prix de chaque journee."""
     return {
@@ -77,7 +92,7 @@ def index():
 def forecast():
     conn = db.connect()
     last_run = conn.execute(
-        f"SELECT MAX(run_date) FROM predictions WHERE {LIVE_VERSIONS}").fetchone()[0]
+        f"SELECT MAX(run_date) FROM predictions_a_jour WHERE {LIVE_VERSIONS}").fetchone()[0]
     items = []
     if last_run:
         # J+0 : la couleur du jour, connue et non predite. Sans elle la page
@@ -94,7 +109,7 @@ def forecast():
             })
         rows = conn.execute(
             f"""SELECT p.*, d.color AS actual, d.is_holiday
-                FROM predictions p LEFT JOIN days d ON d.date = p.target_date
+                FROM predictions_a_jour p LEFT JOIN days d ON d.date = p.target_date
                 WHERE p.run_date = ? AND {LIVE_VERSIONS} ORDER BY p.horizon""",
             (last_run,)).fetchall()
         for r in rows:
@@ -119,9 +134,17 @@ def forecast():
         it["tmean"] = round(w["tmean"], 1) if w else None
         it["tmin"] = round(w["tmin"], 1) if w else None
         it["tmax"] = round(w["tmax"], 1) if w else None
+    # `schedules_utc` reste publie pour dire ce qui est DEMANDE ; `cadence` dit ce qui
+    # est OBTENU, mesure sur les passages reellement effectues. C'est la seconde que la
+    # page affiche -- la premiere s'est revelee fausse de deux a quatre heures.
     return jsonify({"run_date": last_run, "days": items,
                     "season": season_summary(conn), "tariffs": tariff_payload(),
-                    "schedules_utc": config.SCHEDULES_UTC})
+                    "schedules_utc": config.SCHEDULES_UTC,
+                    "cadence": cadence.observee(
+                        cadence.avec_amorce(db.passages_reguliers(conn),
+                                            config.SCHEDULES_UTC),
+                        config.SCHEDULES_UTC),
+                    "derniere_maj": dernier_passage(conn)})
 
 
 @app.get("/api/history")
@@ -142,7 +165,7 @@ def history():
     elif source == "backtest":
         where.append("model_version LIKE 'backtest%'")
     rows = conn.execute(
-        f"""SELECT p.*, d.color AS actual FROM predictions p
+        f"""SELECT p.*, d.color AS actual FROM predictions_a_jour p
             JOIN days d ON d.date = p.target_date
             WHERE {' AND '.join(where)}{period_clause(period)}
             ORDER BY p.target_date DESC, p.horizon LIMIT ?""",
@@ -176,7 +199,7 @@ def accuracy():
     cond += period_clause(period)
     rows = conn.execute(
         f"""SELECT p.horizon, p.predicted_color, p.p_rouge, d.color AS actual
-            FROM predictions p JOIN days d ON d.date = p.target_date
+            FROM predictions_a_jour p JOIN days d ON d.date = p.target_date
             WHERE d.color IS NOT NULL AND p.is_official = 0 {cond}""", params).fetchall()
     by_h, confusion = {}, [[0] * 3 for _ in range(3)]
     for r in rows:

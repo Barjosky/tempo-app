@@ -4,8 +4,9 @@ A lancer une fois par jour apres la publication RTE (~11h).
     python collector.py            # mise a jour du jour
     python collector.py --train    # re-entraine le modele avant de predire
 """
+import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -124,6 +125,14 @@ def main():
     if "--train" in sys.argv or predict.besoin_d_entrainement():
         gbm, version = predict.train(conn, store=store)
         print(f"Modele entraine : {version} (seuil alerte rouge {gbm.rouge_threshold:.2f})")
+
+    # L'instant reel du passage, enregistre APRES la collecte : c'est le moment ou les
+    # donnees sont pretes, donc celui que la page doit annoncer. `GITHUB_EVENT_NAME`
+    # separe un passage programme d'un essai manuel, qui n'a rien a dire sur la cadence.
+    db.enregistrer_passage(conn,
+                           datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                           run_date.isoformat(),
+                           os.environ.get("GITHUB_EVENT_NAME", "local"))
 
     rows = predict.predict_next_days(conn, run_date, store=store)
     names = {1: "Bleu", 2: "Blanc", 3: "Rouge"}
