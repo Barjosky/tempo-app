@@ -14,6 +14,7 @@ La collecte tourne **deux fois par jour** (`config.SCHEDULES_UTC`, verrouillé s
 
 | Passage | UTC | Hiver (UTC+1) | Été (UTC+2) |
 |---|---|---|---|
+| Tôt — pari sur le retard | 06:30 | **07h30** | **08h30** |
 | Matin — après l'annonce RTE | 10:30 | **11h30** | **12h30** |
 | Soir — rattrapage météo | 17:00 | **18h00** | **19h00** |
 
@@ -33,9 +34,18 @@ de charge, c'est la cadence réelle du service. En heure de Paris, la page se me
 jour vers **16h30 et 21h30** l'été, pas 12h30 et 19h.
 
 Conséquence : **ne jamais annoncer un horaire à partir du `cron`.** Le compte à rebours
-de la page vise l'horaire mesuré (`src/cadence.py` : cron + médiane des retards
-observés) et se tait tant que la mesure n'est pas assez solide. Le `cron` reste la
-demande ; la table `runs` est la mesure.
+de la page vise l'horaire **mesuré** — `src/cadence.py` regroupe les heures réellement
+observées, sans jamais regarder les `cron` — et se tait tant que la mesure n'est pas
+assez solide. Le `cron` reste la demande ; la table `runs` est la mesure.
+
+Le passage de **6h30 UTC** exploite ce retard au lieu de le subir : demandé avant
+l'annonce RTE, il s'exécute après. C'est un **pari**, pas une garantie — si GitHub
+redevient ponctuel il tournera trop tôt et le J+1 sortira en prédiction plutôt qu'en
+couleur officielle. Le passage de 10h30 reste le filet.
+
+Corollaire pour toute mesure de cadence : **ne jamais rattacher un passage observé au
+`cron` qu'il suit de plus près.** Avec des créneaux rapprochés, 6h30 retardé de quatre
+heures tombe sur 10h30 et se ferait créditer d'un retard nul.
 
 ## Conventions du projet
 

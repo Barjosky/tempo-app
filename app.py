@@ -141,9 +141,7 @@ def forecast():
                     "season": season_summary(conn), "tariffs": tariff_payload(),
                     "schedules_utc": config.SCHEDULES_UTC,
                     "cadence": cadence.observee(
-                        cadence.avec_amorce(db.passages_reguliers(conn),
-                                            config.SCHEDULES_UTC),
-                        config.SCHEDULES_UTC),
+                        cadence.avec_amorce(db.passages_reguliers(conn))),
                     "derniere_maj": dernier_passage(conn)})
 
 

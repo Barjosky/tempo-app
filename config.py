@@ -17,7 +17,7 @@ DATA_DIR = ROOT / "store"
 # La verite de ces valeurs est le `cron` du workflow, pas ces lignes -- mais la page
 # doit les afficher et ne peut pas lire un YAML. Recopier une valeur, c'est accepter
 # qu'elle derive ; un test verrouille donc les deux listes ensemble.
-SCHEDULES_UTC = ["10:30", "17:00"]
+SCHEDULES_UTC = ["06:30", "10:30", "17:00"]
 
 REPORTS_DIR = ROOT / "reports"
 
