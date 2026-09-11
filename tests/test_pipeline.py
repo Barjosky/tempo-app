@@ -444,7 +444,7 @@ def test_le_dossier_des_rapports_se_cree_tout_seul():
 def test_l_heure_affichee_est_celle_du_workflow():
     """La page annonce une heure de mise a jour ; elle doit etre la vraie.
 
-    `config.SCHEDULE_UTC` est une copie : la verite est le `cron` du workflow, qu'une
+    `config.SCHEDULES_UTC` est une copie : la verite est le `cron` du workflow, qu'une
     page statique ne peut pas lire. Une copie non verrouillee derive -- il suffit de
     changer l'horaire du workflow sans penser a l'autre ligne, et la page ment sans
     que rien ne le signale. C'est la meme classe de probleme que le format du modele.
@@ -454,9 +454,11 @@ def test_l_heure_affichee_est_celle_du_workflow():
     yml = (Path(__file__).parent.parent / ".github/workflows/quotidien.yml").read_text(
         encoding="utf-8")
     crons = re.findall(r'^\s*-\s*cron:\s*"([^"]+)"', yml, re.M)
-    assert len(crons) == 1, f"un seul horaire attendu, {len(crons)} trouve(s) : {crons}"
-    minute, heure = crons[0].split()[:2]
-    attendu = f"{int(heure):02d}:{int(minute):02d}"
-    assert config.SCHEDULE_UTC == attendu, (
-        f"config.SCHEDULE_UTC vaut {config.SCHEDULE_UTC} alors que le workflow "
-        f"tourne a {attendu} UTC")
+    assert crons, "aucun horaire trouve dans le workflow"
+    attendus = []
+    for c in crons:
+        minute, heure = c.split()[:2]
+        attendus.append(f"{int(heure):02d}:{int(minute):02d}")
+    assert sorted(config.SCHEDULES_UTC) == sorted(attendus), (
+        f"config.SCHEDULES_UTC vaut {config.SCHEDULES_UTC} alors que le workflow "
+        f"tourne a {attendus} UTC")

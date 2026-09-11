@@ -5,8 +5,13 @@ name: Prevision quotidienne
 
 on:
   schedule:
-    # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee.
+    # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee : 11h30 l'hiver,
+    # 12h30 l'ete.
     - cron: "30 10 * * *"
+    # Deuxieme passage en fin de journee, pour rattraper une prevision meteo qui a
+    # bouge depuis le matin. 19h l'ete, 18h l'hiver -- un cron ne connait que l'UTC et
+    # ne suit pas le changement d'heure.
+    - cron: "0 17 * * *"
   workflow_dispatch:
     inputs:
       reentrainer:
@@ -96,9 +101,14 @@ jobs:
 
       # Un changement de features rend le modele en cache obsolete : ses colonnes ne
       # correspondent plus. D'ou le declenchement manuel, en plus du lundi.
+      # Le lundi, le reentrainement suit la collecte du matin. Sans cette condition il
+      # tournerait aussi le soir, pour cinq minutes de calcul et le meme modele.
       - name: Reentrainer le modele
+        env:
+          PASSAGE_DU_MATIN: ${{ github.event.schedule != '0 17 * * *' }}
         run: |
-          if [ "${{ inputs.reentrainer }}" = "true" ] || [ "$(date +%u)" = "1" ]; then
+          if [ "${{ inputs.reentrainer }}" = "true" ] ||
+             { [ "$(date +%u)" = "1" ] && [ "$PASSAGE_DU_MATIN" = "true" ]; }; then
             python collector.py --train
           fi
 

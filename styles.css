@@ -193,7 +193,23 @@ main { padding: 28px 40px 72px; }
   margin-top: 12px; padding: 10px 12px; border-radius: 9px;
   background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.05);
 }
-.t-row { display: flex; align-items: baseline; gap: 8px; }
+/* Le prix est le HEROS du bloc, pas une ligne de tableau : c'est lui qui fait agir.
+   L'ancienne disposition poussait le multiplicateur hors de la carte, ou il se
+   faisait couper -- une etiquette qui ne tient pas dans sa marque doit sortir de la
+   marque, pas etre rognee. */
+.t-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.t-main b {
+  font-family: var(--mono); font-size: 19px; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.t-main em {
+  font-style: normal; font-family: var(--mono); font-size: 10.5px; color: var(--fg-dim);
+  padding: 2px 6px; border-radius: 4px; background: var(--ink-3);
+}
+.t-main span {
+  flex-basis: 100%; font-size: 11px; color: var(--fg-dim); letter-spacing: .04em;
+}
+.t-row { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
 .t-row + .t-row { margin-top: 4px; }
 .t-row span { font-size: 11px; color: var(--fg-dim); letter-spacing: .04em; }
 .t-row b {
@@ -206,7 +222,8 @@ main { padding: 28px 40px 72px; }
 }
 .t-row.t-hc b { font-size: 12.5px; font-weight: 400; color: var(--fg-dim); }
 .day[data-color="3"] .tariff { background: rgba(255,87,87,.09); border-color: rgba(255,87,87,.22); }
-.day[data-color="3"] .t-row b { color: var(--rouge); }
+.day[data-color="3"] .t-main b { color: var(--rouge); }
+.day[data-color="3"] .t-main em { background: rgba(255,87,87,.2); color: #ffb3b3; }
 .day[data-color="3"] .t-row.t-hc b { color: var(--fg-dim); }
 .day[data-color="3"] .t-row em { background: rgba(255,87,87,.2); color: #ffb3b3; }
 

@@ -9,13 +9,16 @@ Conséquence pratique : **toujours annoncer les horaires en heure de Paris**, pa
 Dire « la page se met à jour à 11h30 » (ou 12h30 l'été), jamais « à 10h30 UTC » en
 laissant la conversion à faire.
 
-La collecte quotidienne tourne à `10:30` UTC (`config.SCHEDULE_UTC`, verrouillé sur le
+La collecte tourne **deux fois par jour** (`config.SCHEDULES_UTC`, verrouillé sur les
 `cron` du workflow par un test) :
 
-| Saison | UTC | Heure de Paris |
-|---|---|---|
-| Hiver (CET, UTC+1) | 10:30 | **11:30** |
-| Été (CEST, UTC+2) | 10:30 | **12:30** |
+| Passage | UTC | Hiver (UTC+1) | Été (UTC+2) |
+|---|---|---|---|
+| Matin — après l'annonce RTE | 10:30 | **11h30** | **12h30** |
+| Soir — rattrapage météo | 17:00 | **18h00** | **19h00** |
+
+Un `cron` ne connaît que l'UTC et ne suit pas le changement d'heure : l'horaire local
+glisse donc d'une heure entre les deux saisons. C'est assumé, pas un oubli.
 
 ## Conventions du projet
 
