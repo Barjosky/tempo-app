@@ -517,14 +517,32 @@ précisément celui où ces colonnes auraient dû briller. À ce stade je n'ai p
 d'explication mesurée, seulement une hypothèse : cet hiver-là, l'indisponibilité était
 si générale qu'elle ne discriminait plus les jours entre eux.
 
-### Ce qui reste à vérifier sur ces colonnes
+### Ce que contiennent vraiment ces colonnes
 
-135 913 arrêts ont rendu 135 934 paliers, soit **un pour un**. Ou bien les arrêts n'ont
-qu'un seul palier de puissance, ou bien `values` est absent de la réponse de liste et
-le repli sur la puissance **installée** surestime chaque arrêt partiel. Le backtest
-aime ces colonnes ; je ne sais pas encore exactement ce qu'elles contiennent. La
-collecte compte et affiche désormais la part de chacun — chiffre à lire au prochain
-passage complet.
+135 913 arrêts avaient rendu 135 934 paliers, soit **un pour un** : ou bien chaque
+version d'arrêt ne porte qu'un palier, ou bien `values` est absent de la réponse et le
+repli sur la puissance **installée** surestime chaque arrêt partiel. Le backtest aimait
+ces colonnes sans qu'on sache ce qu'elles contenaient.
+
+Mesure, lue en base plutôt que dans les logs de collecte :
+
+```
+136 750 paliers · 50 574 arrêts · 18 versions à plusieurs paliers
+70 % à la puissance installée entière · 0 sans puissance
+```
+
+**Ce que ça tranche.** `values` existe et est exploité : **30 % des paliers portent une
+puissance différente de la puissance installée**, ce que le repli ne peut pas produire —
+il ne sait écrire que `installed_mw`. Et aucun palier n'est muet. La granularité
+temporelle fine passe donc par les **versions** (2,7 par arrêt), pas par `values` : 18
+versions multi-paliers sur 136 750, c'est négligeable.
+
+**Ce que ça ne tranche pas.** Les 70 % restants sont ambigus : un réacteur complètement
+à l'arrêt donne légitimement indisponible = puissance installée. Le discriminant ne
+sépare pas ce cas-là du repli. Borne haute du repli : 70 % ; borne basse : 0 %. Pour
+fermer la question il faudrait marquer l'origine de chaque ligne à l'écriture — non
+fait, parce que le risque résiduel est borné (un repli surestime un arrêt *partiel*, et
+les arrêts partiels sont minoritaires dans un parc nucléaire).
 
 ## Le compte à rebours annonçait une heure fausse de 2 à 4 heures
 
