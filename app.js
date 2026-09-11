@@ -159,7 +159,7 @@ function fillGauge(color, used, quota) {
 async function loadForecast() {
   const data = await loadJson("forecast");
   document.getElementById("run-date").textContent = data.run_date || "aucun";
-  demarrerCompteARebours(data.schedules_utc);
+  demarrerCompteARebours(data.cadence, data.derniere_maj);
   tariffs = data.tariffs || null;
   renderTariffGrid();
 
@@ -221,40 +221,56 @@ async function loadForecast() {
 }
 
 /* ---------- compte a rebours ----------
-   La page ne change qu'une fois par jour, quand la collecte tourne. Sans cette
-   indication, une page ouverte a 9 h et une page ouverte a 18 h se ressemblent, et
-   rien ne dit laquelle est fraiche.
+   La page ne change que deux fois par jour. Sans cette indication, une page ouverte a
+   9 h et une page ouverte a 18 h se ressemblent, et rien ne dit laquelle est fraiche.
 
-   Deux precautions d'honnetete. Les horaires viennent des donnees
-   (config.SCHEDULES_UTC), jamais d'une constante recopiee ici. Et le cron de GitHub
-   Actions est un horaire SOUHAITE, pas garanti : il part regulierement avec plusieurs
-   minutes de retard. On annonce donc « vers », et surtout on ne fait pas confiance a
-   l'heure pour savoir si la mise a jour a eu lieu -- on regarde si les donnees ont
-   change. */
+   CE COMPTEUR A DEJA MENTI. Il visait l'horaire des crons GitHub (10h30 et 17h UTC).
+   Mesure faite sur les passages reels : ils partent avec deux a quatre heures de
+   retard, de facon reproductible. Le compteur tombait donc a zero, affichait « en
+   cours » un quart d'heure, puis repartait vers le passage suivant -- alors que rien
+   n'avait bouge et ne bougerait pas avant des heures.
+
+   Il vise desormais l'horaire MESURE (`data.cadence`, cron + mediane des retards
+   observes), et il ne s'affiche pas tant que la mesure n'est pas assez solide. Deux
+   regles en decoulent :
+     - aucun compte a rebours sans mesure fiable ; on affiche alors « derniere mise a
+       jour il y a X », qui est vrai par construction ;
+     - passe l'heure attendue, on n'enchaine PAS sur le passage suivant : on annonce
+       une mise a jour imminente et on guette les donnees. */
 let tickTimer = null;
 
-/* Il y a deux passages par jour ; on vise le prochain, quel qu'il soit. */
-function prochainCalcul(horaires) {
+/* Le prochain passage FIABLE, en heure UTC mesuree. Les passages dont la cadence
+   n'est pas encore etablie sont ignores plutot que devines. */
+function prochainPassage(cadence) {
   const now = new Date();
-  const candidats = horaires.map((hhmm) => {
-    const [h, m] = hhmm.split(":").map(Number);
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
-    if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
-    return d;
-  });
-  return new Date(Math.min(...candidats));
+  const candidats = (cadence.passages || [])
+    .filter((p) => p.fiable && p.attendu_utc)
+    .map((p) => {
+      const [h, m] = p.attendu_utc.split(":").map(Number);
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+                                 now.getUTCDate(), h, m));
+      if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
+      return d;
+    });
+  return candidats.length ? new Date(Math.min(...candidats)) : null;
 }
 
-/* Depuis combien de temps le dernier passage aurait-il du avoir lieu ? Sert a savoir
-   si l'un d'eux est en train de tourner, sans supposer lequel. */
-function depuisDernierCalcul(horaires) {
+/* L'heure attendue vient-elle de passer sans que rien n'arrive ? On regarde la plus
+   recente des heures attendues, et on la considere « en cours » pendant une fenetre
+   proportionnee a la dispersion observee -- pas une constante inventee. */
+function passageEnCours(cadence) {
   const now = new Date();
-  return Math.min(...horaires.map((hhmm) => {
-    const [h, m] = hhmm.split(":").map(Number);
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
+  return (cadence.passages || []).some((p) => {
+    if (!p.fiable || !p.attendu_utc) return false;
+    const [h, m] = p.attendu_utc.split(":").map(Number);
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+                                now.getUTCDate(), h, m));
     if (d > now) d.setUTCDate(d.getUTCDate() - 1);
-    return now - d;
-  }));
+    // Marge : la dispersion constatee, avec un plancher de 20 min pour le temps
+    // que met le job lui-meme.
+    const marge = Math.max(20, p.dispersion_min || 0) * 60000;
+    return now - d <= marge;
+  });
 }
 
 function dureeCourte(ms) {
@@ -263,30 +279,47 @@ function dureeCourte(ms) {
   return h ? `${h} h ${String(min % 60).padStart(2, "0")}` : `${min} min`;
 }
 
-function demarrerCompteARebours(horaires) {
-  if (!horaires || !horaires.length) return;
+/* « il y a 3 h 20 » — le repli qui reste vrai meme sans cadence connue. */
+function depuis(iso) {
+  if (!iso) return null;
+  const t = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  if (isNaN(t)) return null;
+  return dureeCourte(new Date() - t);
+}
+
+function demarrerCompteARebours(cadence, derniereMaj) {
   const box = document.getElementById("next-run");
   const val = document.getElementById("countdown");
   const at = document.getElementById("next-at");
+  const label = box ? box.querySelector(".label") : null;
   if (!box) return;
   box.hidden = false;
 
   const tick = () => {
-    const next = prochainCalcul(horaires);
-    const reste = next - new Date();
-    // Pendant le quart d'heure qui suit un horaire, le job tourne probablement encore.
-    const vientDePasser = depuisDernierCalcul(horaires) < 15 * 60000;
-    if (vientDePasser) {
-      box.dataset.state = "running";
-      val.textContent = "en cours";
-      at.textContent = "les données arrivent";
-      guetterNouvellesDonnees();
-    } else {
+    const age = depuis(derniereMaj);
+    // Sans cadence mesurable, on ne promet rien : on dit ce qu'on sait.
+    if (!cadence || !cadence.fiable) {
       box.dataset.state = "";
-      val.textContent = dureeCourte(reste);
-      at.textContent = "vers " + next.toLocaleTimeString("fr-FR",
-        { hour: "2-digit", minute: "2-digit" });
+      if (label) label.textContent = "dernière mise à jour";
+      val.textContent = age ? "il y a " + age : "—";
+      at.textContent = "prochaine dans la journée, heure encore mal connue";
+      return;
     }
+    if (passageEnCours(cadence)) {
+      box.dataset.state = "running";
+      if (label) label.textContent = "mise à jour";
+      val.textContent = "imminente";
+      at.textContent = age ? "la dernière date d'il y a " + age : "les données arrivent";
+      guetterNouvellesDonnees();
+      return;
+    }
+    const next = prochainPassage(cadence);
+    if (!next) return;
+    box.dataset.state = "";
+    if (label) label.textContent = "prochain calcul";
+    val.textContent = dureeCourte(next - new Date());
+    at.textContent = "vers " + next.toLocaleTimeString("fr-FR",
+      { hour: "2-digit", minute: "2-digit" });
   };
   tick();
   clearInterval(tickTimer);

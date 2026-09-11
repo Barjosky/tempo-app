@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import config
 from app import app
+from src import db
 
 OUT = config.SITE_DIR / "data"
 SOURCES = ["all", "live", "backtest"]
@@ -60,6 +61,43 @@ def dump(client, name, url):
     return len(resp.data)
 
 
+def sante_indisponibilites():
+    """Sur quoi reposent vraiment les cinq colonnes d'offre ?
+
+    Elles sont arrivees avec une question non tranchee : 135 913 arrets pour 135 934
+    paliers, soit un pour un. Ou bien chaque version d'arret ne porte qu'un palier, ou
+    bien `values` est absent de la reponse et le repli sur la puissance INSTALLEE
+    surestime tout arret partiel. Le backtest aime ces colonnes ; ca ne dit pas ce
+    qu'elles contiennent.
+
+    Le discriminant est dans la base, pas dans les logs de collecte : le repli pose
+    `unavailable_mw = installed_mw`, un palier publie ne le fait qu'exceptionnellement.
+    La reponse s'affiche donc a CHAQUE passage, en fin de run, la ou on la lit sans
+    fouiller -- plutot que dans une ligne noyee au milieu de quatre-vingts fenetres.
+    """
+    conn = db.connect()
+    tables = {r["name"] for r in
+              conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "unavailabilities" not in tables:
+        return
+    r = conn.execute("""SELECT COUNT(*) n,
+                               COUNT(DISTINCT identifier) arrets,
+                               SUM(unavailable_mw IS NULL) sans_mw,
+                               SUM(installed_mw IS NOT NULL
+                                   AND unavailable_mw = installed_mw) pleine_puissance
+                        FROM unavailabilities""").fetchone()
+    if not r["n"]:
+        print("Indisponibilites RTE : table vide (pas de cle ?) — colonnes d'offre a NaN")
+        return
+    multi = conn.execute("""SELECT COUNT(*) n FROM (
+                              SELECT identifier, version FROM unavailabilities
+                              GROUP BY identifier, version HAVING COUNT(*) > 1)""").fetchone()["n"]
+    part = (r["pleine_puissance"] or 0) / r["n"]
+    print(f"Indisponibilites RTE : {r['n']} paliers, {r['arrets']} arrets, "
+          f"{multi} versions a plusieurs paliers, "
+          f"{part:.0%} a la puissance installee entiere, {r['sans_mw'] or 0} sans puissance")
+
+
 def main():
     # On ne vide que les JSON : le dossier peut contenir autre chose (sur le depot
     # publie, il est a la racine du site).
@@ -93,6 +131,8 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "periods": config.PERIODS,
     }), encoding="utf-8")
+
+    sante_indisponibilites()
 
     files = len(list(OUT.glob("*.json")))
     print(f"{files} fichiers ecrits dans {OUT} ({total / 1024:.0f} Ko)")

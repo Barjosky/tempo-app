@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import fixtures
 import ingest_rte
-from src import db, features, model
+from src import cadence, db, features, model
 from src.sources import rte
 
 _STORE = {}
@@ -626,3 +626,78 @@ def test_les_dates_envoyees_a_rte_portent_le_suffixe_z():
         assert rendu.endswith("Z"), f"format refuse par RTE : {rendu}"
         assert "+" not in rendu, f"decalage explicite refuse par RTE : {rendu}"
     assert jour.endswith("T00:00:00Z") and instant.endswith("T12:30:05Z")
+
+
+# Les quatre passages programmes reellement observes, en UTC. Ils servent de reference
+# a plusieurs tests : ce sont des mesures, pas un jeu d'essai invente.
+PASSAGES_REELS = [
+    "2026-09-09T14:41:54+00:00",   # cron 10:30 -> 4 h 11 de retard
+    "2026-09-10T14:32:06+00:00",   # cron 10:30 -> 4 h 02
+    "2026-09-11T14:30:53+00:00",   # cron 10:30 -> 4 h 00
+    "2026-09-11T19:27:58+00:00",   # cron 17:00 -> 2 h 27
+]
+
+
+def test_la_page_annonce_l_heure_obtenue_pas_l_heure_demandee():
+    """Le compte a rebours a menti pendant des heures, et c'est ce test qui l'empeche.
+
+    Il visait le cron (10h30 UTC) quand les passages partent a 14h30. Il tombait a zero,
+    affichait « en cours » un quart d'heure, puis repartait vers le passage suivant --
+    alors que rien n'avait bouge. On verrouille donc l'ecart : l'heure annoncee doit
+    suivre la MESURE, pas la demande.
+    """
+    vu = cadence.observee(PASSAGES_REELS, ["10:30", "17:00"])
+    matin = vu["passages"][0]
+    assert matin["attendu_utc"] != matin["cron_utc"], (
+        "l'heure annoncee retombe sur le cron : la mesure n'est pas utilisee")
+    assert matin["attendu_utc"] == "14:32", f"mediane attendue 14:32, obtenu {matin}"
+    assert 230 <= matin["retard_median_min"] <= 250
+
+
+def test_sans_assez_de_mesures_on_ne_promet_rien():
+    """Le passage du soir n'a qu'une observation : annoncer une heure precise dessus
+    serait remplacer une promesse fausse par une autre."""
+    vu = cadence.observee(PASSAGES_REELS, ["10:30", "17:00"])
+    soir = vu["passages"][1]
+    assert soir["mesures"] == 1
+    assert not soir["fiable"], "une seule mesure ne fait pas une cadence"
+    # Mais le matin, lui, est mesurable : un horaire mal connu ne doit pas priver
+    # la page du compte a rebours de l'autre.
+    assert vu["fiable"], "au moins un passage fiable devrait suffire"
+
+
+def test_un_horaire_trop_disperse_est_declare_non_fiable():
+    """Une mediane sur des heures qui sautent de trois heures ne prevoit rien."""
+    erratiques = ["2026-09-0%dT%02d:00:00+00:00" % (j, h)
+                  for j, h in ((1, 11), (2, 14), (3, 12), (4, 15), (5, 11))]
+    vu = cadence.observee(erratiques, ["10:30"])
+    assert vu["passages"][0]["mesures"] == 5
+    assert not vu["passages"][0]["fiable"], "dispersion de 4 h declaree fiable"
+
+
+def test_un_essai_manuel_ne_fausse_pas_la_cadence():
+    """Un `workflow_dispatch` lance a 3 h du matin n'a rien a dire sur la cadence
+    quotidienne. Sans ce filtre, il tirerait la mediane n'importe ou."""
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    for horodatage, declencheur in (
+            ("2026-09-09T14:41:54+00:00", "schedule"),
+            ("2026-09-10T14:32:06+00:00", "schedule"),
+            ("2026-09-10T03:12:00+00:00", "workflow_dispatch"),
+            ("2026-09-11T14:30:53+00:00", "schedule")):
+        db.enregistrer_passage(conn, horodatage, horodatage[:10], declencheur)
+    vus = db.passages_reguliers(conn)
+    assert len(vus) == 3, f"l'essai manuel n'a pas ete ecarte : {vus}"
+    assert cadence.observee(vus, ["10:30"])["passages"][0]["attendu_utc"] == "14:32"
+
+
+def test_l_amorce_s_efface_quand_la_base_mesure_seule():
+    """L'amorce evite deux jours sans cadence au demarrage. Mais un releve fige dans
+    le code ne doit pas continuer a peser une fois que le systeme se mesure lui-meme :
+    sinon la page annoncerait encore, dans six mois, l'horaire de septembre."""
+    horaires = ["10:30", "17:00"]
+    assert cadence.avec_amorce([], horaires) == cadence.AMORCE, (
+        "sans aucune observation, l'amorce devrait servir")
+    propres = ["2027-01-%02dT09:00:00+00:00" % j for j in range(1, 7)]
+    assert cadence.avec_amorce(propres, horaires) == propres, (
+        "l'amorce pese encore alors que la base a de quoi mesurer seule")

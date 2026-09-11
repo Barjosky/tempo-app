@@ -110,6 +110,21 @@ CREATE TABLE IF NOT EXISTS unavailabilities (
 CREATE INDEX IF NOT EXISTS idx_indispo_pub ON unavailabilities(publication_date);
 CREATE INDEX IF NOT EXISTS idx_indispo_fin ON unavailabilities(palier_end);
 
+-- Heure REELLE de chaque passage de la collecte. Un cron GitHub est un horaire
+-- SOUHAITE : mesure faite sur quatre passages, il part avec 2 h 30 a 4 h de retard, et
+-- de facon reproductible. Le compte a rebours de la page ne peut donc pas se calculer
+-- sur l'horaire demande -- il tomberait a zero des heures avant que quoi que ce soit
+-- ne bouge. Cette table est la mesure a partir de laquelle il s'annonce.
+--
+-- `trigger` separe les passages REGULIERS des essais manuels : un dispatch lance a
+-- 15 h n'a rien a dire sur la cadence quotidienne et fausserait la mediane.
+-- Jamais reecrite : c'est une serie de mesures, pas un etat.
+CREATE TABLE IF NOT EXISTS runs (
+    run_datetime TEXT PRIMARY KEY,
+    run_date TEXT NOT NULL,
+    trigger TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pred_target ON predictions(target_date);
 CREATE INDEX IF NOT EXISTS idx_days_season ON days(season);
 """
@@ -219,6 +234,24 @@ def upsert_unavailabilities(conn, rows):
         rows,
     )
     conn.commit()
+
+
+def enregistrer_passage(conn, run_datetime, run_date, declencheur):
+    conn.execute("""INSERT INTO runs (run_datetime, run_date, trigger)
+                    VALUES (?, ?, ?) ON CONFLICT(run_datetime) DO NOTHING""",
+                 (run_datetime, run_date, declencheur))
+    conn.commit()
+
+
+def passages_reguliers(conn, limite=40):
+    """Les derniers passages PROGRAMMES, du plus recent au plus ancien."""
+    tables = {r["name"] for r in
+              conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "runs" not in tables:
+        return []
+    return [r["run_datetime"] for r in conn.execute(
+        """SELECT run_datetime FROM runs WHERE trigger = 'schedule'
+           ORDER BY run_datetime DESC LIMIT ?""", (limite,))]
 
 
 def insert_predictions(conn, rows):

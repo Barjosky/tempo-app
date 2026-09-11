@@ -20,6 +20,23 @@ La collecte tourne **deux fois par jour** (`config.SCHEDULES_UTC`, verrouillé s
 Un `cron` ne connaît que l'UTC et ne suit pas le changement d'heure : l'horaire local
 glisse donc d'une heure entre les deux saisons. C'est assumé, pas un oubli.
 
+**Mais ces horaires sont ceux qu'on DEMANDE, pas ceux qu'on obtient.** Mesuré sur les
+passages réellement effectués (API GitHub Actions, 9 au 11 septembre 2026) :
+
+| Cron | Départs observés | Retard |
+|---|---|---|
+| 10:30 UTC | 14h41, 14h32, 14h30 | **~4 h** |
+| 17:00 UTC | 19h27 | **~2 h 30** |
+
+Quatre heures reproduites à la minute près trois jours de suite : ce n'est pas un aléa
+de charge, c'est la cadence réelle du service. En heure de Paris, la page se met donc à
+jour vers **16h30 et 21h30** l'été, pas 12h30 et 19h.
+
+Conséquence : **ne jamais annoncer un horaire à partir du `cron`.** Le compte à rebours
+de la page vise l'horaire mesuré (`src/cadence.py` : cron + médiane des retards
+observés) et se tait tant que la mesure n'est pas assez solide. Le `cron` reste la
+demande ; la table `runs` est la mesure.
+
 ## Conventions du projet
 
 - **Branche de travail** : `claude/tempo-page-status-qv8ur4`. Jamais de push direct sur

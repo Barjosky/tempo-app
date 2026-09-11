@@ -526,6 +526,35 @@ aime ces colonnes ; je ne sais pas encore exactement ce qu'elles contiennent. La
 collecte compte et affiche désormais la part de chacun — chiffre à lire au prochain
 passage complet.
 
+## Le compte à rebours annonçait une heure fausse de 2 à 4 heures
+
+Il visait le `cron` GitHub. Mesure sur les quatre passages programmés (API Actions) :
+
+| Cron demandé | Départ réel (UTC) | Retard |
+|---|---|---|
+| 10:30 → 09/09 | 14h41 | **4 h 11** |
+| 10:30 → 10/09 | 14h32 | **4 h 02** |
+| 10:30 → 11/09 | 14h30 | **4 h 00** |
+| 17:00 → 11/09 | 19h27 | **2 h 27** |
+
+Dispersion du passage du matin : **11 minutes sur trois jours**. Un retard de quatre
+heures aussi stable n'est pas un aléa de charge — c'est la cadence du service.
+
+Le compteur tombait donc à zéro, affichait « en cours » un quart d'heure, puis repartait
+vers le passage suivant, alors que rien n'avait bougé et ne bougerait pas avant des
+heures. **Un garde-fou qui repose sur une promesse que personne ne tient n'en est pas
+un** — c'est la même leçon que le numéro de version à incrémenter à la main.
+
+Corrigé par la mesure : la table `runs` enregistre l'instant réel de chaque passage,
+`src/cadence.py` en tire cron + médiane des retards, et la page annonce ça. Avec deux
+règles d'honnêteté : aucun compte à rebours tant qu'un passage n'a pas
+**3 mesures et moins de 2 h de dispersion** (on affiche alors « dernière mise à jour il
+y a X », vrai par construction) ; et passé l'heure attendue, on n'enchaîne pas sur le
+passage suivant — on annonce une mise à jour imminente et on guette les données.
+
+Les essais manuels (`workflow_dispatch`) sont exclus de la médiane : un run lancé à 3 h
+du matin n'a rien à dire sur la cadence quotidienne.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
