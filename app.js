@@ -157,6 +157,7 @@ function fillGauge(color, used, quota) {
 async function loadForecast() {
   const data = await loadJson("forecast");
   document.getElementById("run-date").textContent = data.run_date || "aucun";
+  demarrerCompteARebours(data.schedule_utc);
   tariffs = data.tariffs || null;
   renderTariffGrid();
 
@@ -215,6 +216,83 @@ async function loadForecast() {
         ${proba}
       </article>`;
   }).join("");
+}
+
+/* ---------- compte a rebours ----------
+   La page ne change qu'une fois par jour, quand la collecte tourne. Sans cette
+   indication, une page ouverte a 9 h et une page ouverte a 18 h se ressemblent, et
+   rien ne dit laquelle est fraiche.
+
+   Deux precautions d'honnetete. L'horaire vient des donnees (config.SCHEDULE_UTC),
+   jamais d'une constante recopiee ici. Et le cron de GitHub Actions est un horaire
+   SOUHAITE, pas garanti : il part regulierement avec plusieurs minutes de retard.
+   On annonce donc « vers », et surtout on ne fait pas confiance a l'heure pour savoir
+   si la mise a jour a eu lieu -- on regarde si les donnees ont change. */
+let tickTimer = null;
+
+function prochainCalcul(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m));
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+
+function dureeCourte(ms) {
+  const min = Math.max(0, Math.round(ms / 60000));
+  const h = Math.floor(min / 60);
+  return h ? `${h} h ${String(min % 60).padStart(2, "0")}` : `${min} min`;
+}
+
+function demarrerCompteARebours(hhmm) {
+  if (!hhmm) return;
+  const box = document.getElementById("next-run");
+  const val = document.getElementById("countdown");
+  const at = document.getElementById("next-at");
+  if (!box) return;
+  box.hidden = false;
+
+  const tick = () => {
+    const next = prochainCalcul(hhmm);
+    const reste = next - new Date();
+    // Pendant le quart d'heure qui suit l'horaire, le job tourne probablement encore.
+    const vientDePasser = (24 * 3600000 - reste) < 15 * 60000;
+    if (vientDePasser) {
+      box.dataset.state = "running";
+      val.textContent = "en cours";
+      at.textContent = "les données arrivent";
+      guetterNouvellesDonnees();
+    } else {
+      box.dataset.state = "";
+      val.textContent = dureeCourte(reste);
+      at.textContent = "vers " + next.toLocaleTimeString("fr-FR",
+        { hour: "2-digit", minute: "2-digit" });
+    }
+  };
+  tick();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(tick, 30000);
+}
+
+/* On ne recharge pas « a l'heure dite » : le job peut avoir pris du retard, et on
+   servirait alors les donnees de la veille en croyant les rafraichir. On recharge
+   quand la date de generation a REELLEMENT change. */
+let guet = null;
+let metaInitial = null;
+
+function guetterNouvellesDonnees() {
+  if (guet) return;
+  guet = setInterval(async () => {
+    try {
+      const r = await fetch("data/meta.json?" + Date.now(), { cache: "no-store" });
+      if (!r.ok) return;
+      const meta = (await r.json()).generated_at;
+      if (metaInitial === null) { metaInitial = meta; return; }
+      if (meta !== metaInitial) location.reload();
+    } catch (e) {
+      /* hors ligne ou servie par l'API : on retentera au prochain tour */
+    }
+  }, 120000);
 }
 
 /* ---------- historique ---------- */
