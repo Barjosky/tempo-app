@@ -159,19 +159,19 @@ eux est l'information :
 
 | Période | Prédictions | Réussite | Ce qu'elle contient |
 |---|---|---|---|
-| Toute l'année | 14 614 | 89,3 % | flatteur — inclut les mois sans enjeu |
-| Novembre → mars | 6 050 | 77,7 % | la fenêtre où un Rouge est possible |
-| **Jours éligibles** | **4 190** | **71,0 %** | lundi-vendredi, nov-mars, hors fériés |
+| Toute l'année | 14 614 | 89,6 % | flatteur — inclut les mois sans enjeu |
+| Novembre → mars | 6 050 | 78,6 % | la fenêtre où un Rouge est possible |
+| **Jours éligibles** | **4 190** | **72,2 %** | lundi-vendredi, nov-mars, hors fériés |
 
 Plus de 18 points d'écart entre le premier chiffre et le dernier. C'est sur le dernier que
 le modèle a réellement un choix à faire.
 
 Ce dénominateur corrige aussi une lecture erronée. La précision paraissait *plate* d'une
-échéance à l'autre — 90,7 % à J+1 contre 88,6 % à J+10 — ce qui laissait croire que le
+échéance à l'autre — 91,2 % à J+1 contre 88,7 % à J+10 — ce qui laissait croire que le
 modèle n'exploitait pas la précision des prévisions courtes. Sur les jours éligibles la
-pente apparaît : **75,7 % à J+1 contre 68,7 % à J+10**, soit trois fois plus. La platitude
+pente apparaît : **77,3 % à J+1 contre 69,2 % à J+10**, soit trois fois plus. La platitude
 venait pour l'essentiel du dénominateur, pas du modèle. Le rappel Rouge, lui, reste bien
-plat (84 % à J+1, 82 % à J+10) : cette part de l'anomalie tient toujours.
+plat (76 % à J+1, 72 % à J+10) : cette part de l'anomalie tient toujours.
 
 ## Ce que ça rapporte, en euros
 

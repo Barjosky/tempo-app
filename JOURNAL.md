@@ -300,10 +300,26 @@ vingtaine de journées d'organisation inutile évitées. En euros c'est un lége
 assumé (voir plus bas) : une alerte juste 42 % du temps finit ignorée, et une alerte
 ignorée ne vaut rien.
 
-Effet de bord attendu, non encore mesuré : `decide()` promeut le Blanc puis laisse le
-Rouge écraser par-dessus. Un seuil Rouge plus haut rend donc des journées au Blanc, dont
-le rappel réel (45 %) était la faiblesse principale. Le sens est certain — c'est de
-l'arithmétique, il y a strictement moins d'écrasements — l'ampleur ne l'est pas.
+**Effet mesuré après rejeu du backtest.** L'effet de bord attendu s'est produit, et il
+est plus large que le coût :
+
+| Sur les jours éligibles | seuil 0,25 | seuil 0,40 |
+|---|---|---|
+| Exactitude globale | 71,0 % | **72,2 %** |
+| Rappel Bleu | 81 % | 82 % |
+| **Rappel Blanc** | 45 % | **53 %** |
+| Rappel Rouge | 82 % | 74 % |
+| **Précision des alertes Rouge** | 58 % | **68 %** |
+| Nombre d'alertes Rouge | 1241 | 961 |
+
+Le gain du Blanc vient exactement d'où il était prévu : la part des Blanc annoncés Rouge
+tombe de **30 % à 20 %**, ce sont les journées que le Rouge ne vole plus. La part
+annoncée Bleu bouge à peine (25 → 27 %), ce qui confirme le mécanisme : `decide()`
+promeut le Blanc puis laisse le Rouge écraser par-dessus, et il écrase moins.
+
+Ce que je n'avais pas prévu : **l'exactitude globale monte** (71,0 → 72,2 %). Le Blanc
+étant plus fréquent que le Rouge sur les jours éligibles (30 contre 22), lui rendre
+8 points de rappel rapporte plus que les 8 points perdus sur le Rouge.
 
 Le détail par saison montre deux régimes opposés :
 
