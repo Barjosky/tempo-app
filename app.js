@@ -1,7 +1,11 @@
 const COLORS = { 1: "#3b82f6", 2: "#e9edf2", 3: "#ef4444" };
 const NAMES = { 1: "Bleu", 2: "Blanc", 3: "Rouge" };
 const DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-const state = { source: "all", horizon: "", period: "all" };
+/* Le perimetre par defaut est le plus honnete, pas le plus flatteur : sur l'annee
+   entiere le taux est porte par des mois ou la reponse est Bleu d'avance. Ouvrir sur
+   90 % quand le chiffre qui engage est 72 % reviendrait a mettre en avant celui qu'on
+   sait trompeur. */
+const state = { source: "all", horizon: "", period: "eligibles", missOnly: false };
 
 const fmtDate = (iso) => {
   const d = new Date(iso + "T00:00:00");
@@ -83,23 +87,49 @@ function ratioToBleu(color) {
   return r < 1.15 ? null : "×" + r.toFixed(1).replace(".", ",");
 }
 
+/* Le prix ne figure sur la carte que s'il DIFFERE du Bleu. Les onze cartes
+   repetaient sinon le meme tarif a l'identique, alors que la colonne de gauche porte
+   deja la grille complete des trois couleurs, en permanence. Un jour ordinaire n'a
+   rien a dire sur le prix ; un jour cher, si. */
 function tariffBlock(color) {
-  if (!tariffs) return "";
+  if (!tariffs || color === 1) return "";
   const t = tariffs.by_color[color];
   const ratio = ratioToBleu(color);
   return `
     <div class="tariff">
-      <div class="t-row"><span>Pleines</span>
+      <div class="t-row"><span>Heures pleines</span>
         <b>${euro(t.hp)} €</b>${ratio ? `<em>${ratio}</em>` : ""}</div>
       <div class="t-row t-hc"><span>Creuses</span><b>${euro(t.hc)} €</b></div>
     </div>`;
+}
+
+/* Une journee est « calme » quand il n'y a rien a decider : Bleu, et sans hesitation
+   serieuse. Sa carte se replie alors, pour que les journees qui comptent ressortent
+   d'elles-memes au lieu d'etre noyees dans un mur de cartes identiques. */
+function estCalme(d) {
+  if (d.color !== 1) return false;
+  if (!d.p) return true;
+  return d.p[1] < 0.12 && d.p[2] < 0.05;
 }
 
 /* Un jour Rouge probable est l'information qui fait agir : on la sort des cartes. */
 function renderAlert(days) {
   const strip = document.getElementById("alert-strip");
   const rouges = days.filter((d) => d.color === 3);
-  if (!rouges.length) { strip.innerHTML = ""; return; }
+  if (!rouges.length) {
+    // La reponse a « dois-je m'inquieter ? » doit se lire sans parcourir onze cartes.
+    // Quand il n'y a rien, on le dit.
+    const blancs = days.filter((d) => d.color === 2).length;
+    const suite = blancs
+      ? `${blancs} jour${blancs > 1 ? "s" : ""} Blanc, aucun Rouge.`
+      : "Aucun jour Blanc ni Rouge.";
+    strip.innerHTML = `<div class="calm">
+        <span class="calm-mark" aria-hidden="true"></span>
+        <div><strong>Rien à signaler</strong> sur les ${days.length} prochains jours :
+          ${suite} Tout reste au tarif Bleu.</div>
+      </div>`;
+    return;
+  }
   const items = rouges.map((d) => {
     const f = fmtDate(d.date);
     const quand = d.horizon === 0 ? "aujourd'hui" : `${f.dow} ${f.num} ${f.month}`;
@@ -114,11 +144,14 @@ function renderAlert(days) {
     </div>`;
 }
 
+/* La barre represente ce qui RESTE, comme son titre. Elle montrait le consomme :
+   « BLEUS RESTANTS 288 » surmontait donc une barre quasi vide, le chiffre et le
+   dessin racontant l'inverse l'un de l'autre. */
 function fillGauge(color, used, quota) {
   document.getElementById(color + "-left").textContent = quota - used;
   document.getElementById(color + "-used").textContent = used;
   document.getElementById(color + "-quota").textContent = quota;
-  document.getElementById(color + "-bar").style.width = (used / quota) * 100 + "%";
+  document.getElementById(color + "-bar").style.width = ((quota - used) / quota) * 100 + "%";
 }
 
 async function loadForecast() {
@@ -145,22 +178,15 @@ async function loadForecast() {
   renderAlert(data.days);
   box.innerHTML = data.days.map((d, i) => {
     const f = fmtDate(d.date);
+    const calme = estCalme(d);
+    // La temperature explique la prevision : elle monte dans l'en-tete, au lieu
+    // d'etre reléguee en bas de carte en petit.
     const temp = d.tmean == null ? "" :
-      `<div class="temp"><span>temp.</span> ${deg(d.tmean)}
-         <span>(${deg(d.tmin)} / ${deg(d.tmax)})</span></div>`;
-    return `
-      <article class="day" data-color="${d.color}" style="--col:${COLORS[d.color]};animation-delay:${i * 45}ms">
-        <div class="day-head">
-          <div class="date"><span class="dow">${f.dow}</span> <span class="dnum">${f.num}</span>
-            <span class="dow">${f.month}</span></div>
-          <span class="horizon">${d.horizon === 0 ? "auj." : "J+" + d.horizon}</span>
-        </div>
-        <div class="verdict">
-          <span class="chip"></span><b>${d.color_name}</b>
-          ${d.official ? '<span class="tag">officiel RTE</span>' : ""}
-        </div>
-        ${tariffBlock(d.color)}
-        ${!d.p ? "" : `
+      `<span class="t-now">${deg(d.tmean)}</span>
+       <span class="t-range">${deg(d.tmin)} / ${deg(d.tmax)}</span>`;
+    // Detailler « Bleu 100 % · Blanc 0 % · Rouge 0 % » n'apprend rien. La barre et
+    // le detail n'apparaissent que s'il y a vraiment une hesitation a montrer.
+    const proba = (!d.p || calme) ? "" : `
         <div class="proba">
           <div class="pbar">
             <i class="b" style="width:${d.p[0] * 100}%"></i>
@@ -171,8 +197,22 @@ async function loadForecast() {
             <span>Bleu ${pct(d.p[0])}</span><span>Blanc ${pct(d.p[1])}</span>
             <span class="${d.p[2] > 0.15 ? "hot" : ""}">Rouge ${pct(d.p[2])}</span>
           </div>
-        </div>`}
-        ${temp}
+        </div>`;
+    return `
+      <article class="day${calme ? " is-calme" : ""}" data-color="${d.color}"
+               style="--col:${COLORS[d.color]};animation-delay:${i * 40}ms">
+        <div class="day-head">
+          <div class="date"><span class="dow">${f.dow}</span> <span class="dnum">${f.num}</span>
+            <span class="dow">${f.month}</span></div>
+          <span class="horizon">${d.horizon === 0 ? "auj." : "J+" + d.horizon}</span>
+        </div>
+        <div class="verdict">
+          <span class="chip"></span><b>${d.color_name}</b>
+          ${d.official ? '<span class="tag">officiel RTE</span>' : ""}
+        </div>
+        ${temp ? `<div class="temp">${temp}</div>` : ""}
+        ${tariffBlock(d.color)}
+        ${proba}
       </article>`;
   }).join("");
 }
@@ -203,6 +243,11 @@ document.querySelectorAll("#period-filter button").forEach((b) => {
     loadHistory();
   });
 });
+
+const missToggle = document.getElementById("miss-only");
+if (missToggle) {
+  missToggle.addEventListener("click", () => { state.missOnly = !state.missOnly; loadHistory(); });
+}
 
 const horizonSelect = document.getElementById("horizon-filter");
 for (let h = 1; h <= 10; h++) horizonSelect.add(new Option("J+" + h, h));
@@ -240,13 +285,7 @@ async function loadHistory() {
       <b>${alertes ? pct(rougesFound / alertes) : "—"}</b>
       <small>${Math.round(rougesFound)} / ${alertes} jours annoncés Rouge</small></div>`;
 
-  document.getElementById("horizon-bars").innerHTML = acc.by_horizon.length
-    ? acc.by_horizon.map((h) => `
-      <div class="hbar"><span>J+${h.horizon}</span>
-        <span class="t"><i style="width:${(h.accuracy || 0) * 100}%"></i></span>
-        <span class="v">${pct(h.accuracy)} · R ${pct(h.rouge_recall)}
-          <em>/ ${pct(h.rouge_precision)}</em></span></div>`).join("")
-    : '<p class="empty">Pas encore de données.</p>';
+  renderHorizons(acc.by_horizon);
 
   const labels = ["Bleu", "Blanc", "Rouge"];
   const max = Math.max(1, ...acc.confusion.flat());
@@ -257,10 +296,23 @@ async function loadHistory() {
         `<div class="${i === j ? "diag" : ""}" style="background:rgba(59,130,246,${0.08 + 0.5 * v / max})">${v}</div>`
       ).join("")).join("");
 
-  renderReliability(acc.reliability || []);
+  renderCalibration(acc.reliability || []);
+
+  // Les lignes justes se ressemblent toutes ; ce sont les ecarts qu'on vient lire.
+  // Elles sont donc marquees, comptees, et isolables d'un clic.
+  const rates = rows.filter((r) => !(r.correct || r.official));
+  const shown = state.missOnly ? rates : rows;
+  const toggle = document.getElementById("miss-only");
+  if (toggle) {
+    toggle.classList.toggle("is-active", state.missOnly);
+    toggle.textContent = state.missOnly
+      ? `Tout afficher (${rows.length})`
+      : `Erreurs seulement (${rates.length})`;
+    toggle.disabled = !rates.length && !state.missOnly;
+  }
 
   const tbody = document.querySelector("#history-table tbody");
-  tbody.innerHTML = rows.length ? rows.map((r) => `
+  tbody.innerHTML = shown.length ? shown.map((r) => `
     <tr class="${r.correct || r.official ? "" : "miss"}">
       <td>${r.target_date}</td><td>J+${r.horizon}</td>
       <td><span class="dot" style="background:${COLORS[r.predicted]}"></span>${r.predicted_name}</td>
@@ -268,32 +320,124 @@ async function loadHistory() {
       <td>${pct(r.p[0])}</td><td>${pct(r.p[1])}</td><td>${pct(r.p[2])}</td>
       <td class="src">${r.official ? "officiel" : r.backtest ? "backtest" : "temps réel"}</td>
     </tr>`).join("")
-    : '<tr><td colspan="8" class="empty">Aucune prédiction évaluable pour ce filtre.</td></tr>';
+    : `<tr><td colspan="8" class="empty">${state.missOnly
+        ? "Aucune erreur sur les lignes affichées."
+        : "Aucune prédiction évaluable pour ce filtre."}</td></tr>`;
 }
 
-/* Fiabilite : l'ecart entre ce qui est annonce et ce qui tombe. Deux barres par
-   tranche valent mieux qu'une courbe ici -- on lit l'ecart, pas la tendance. */
-function renderReliability(bins) {
+/* Une suite de dix barres partant toutes de zero rendait la decroissance invisible :
+   91 % et 89 % donnent deux barres identiques a l'oeil. Ce qui se raconte ici est une
+   TENDANCE le long des echeances, donc une ligne -- forme ou une echelle qui ne part
+   pas de zero est licite, a condition de l'afficher, ce que fait l'axe. */
+function renderHorizons(rows) {
+  const box = document.getElementById("horizon-bars");
+  if (!rows.length) { box.innerHTML = '<p class="empty">Pas encore de données.</p>'; return; }
+
+  const vals = rows.map((h) => h.accuracy || 0);
+  // L'echelle se cale sur les donnees, arrondie aux 10 points, et reste affichee.
+  const lo = Math.max(0, Math.floor(Math.min(...vals) * 10) / 10 - 0.05);
+  const hi = Math.min(1, Math.ceil(Math.max(...vals) * 10) / 10 + 0.05);
+  const W = 560, H = 190, ML = 46, MR = 52, MT = 14, MB = 30;
+  const x = (i) => ML + (i / Math.max(1, rows.length - 1)) * (W - ML - MR);
+  const y = (v) => MT + (1 - (v - lo) / (hi - lo)) * (H - MT - MB);
+
+  const ticks = [lo, (lo + hi) / 2, hi].map((v) => `
+    <line x1="${ML}" x2="${W - MR}" y1="${y(v)}" y2="${y(v)}" class="grid"/>
+    <text x="${ML - 8}" y="${y(v) + 4}" class="ax" text-anchor="end">${Math.round(v * 100)}%</text>`).join("");
+
+  const path = rows.map((h, i) => `${i ? "L" : "M"}${x(i)},${y(h.accuracy || 0)}`).join(" ");
+  const pts = rows.map((h, i) => `
+    <circle cx="${x(i)}" cy="${y(h.accuracy || 0)}" r="4.5" class="pt"/>
+    <circle cx="${x(i)}" cy="${y(h.accuracy || 0)}" r="13" class="hit"
+      data-tip="J+${h.horizon} — réussite ${pct(h.accuracy)} · rouges anticipés ${pct(h.rouge_recall)} · alertes justifiées ${pct(h.rouge_precision)} · ${h.n} prédictions"/>`).join("");
+
+  const xlab = rows.map((h, i) =>
+    (i === 0 || i === rows.length - 1 || (i + 1) % 3 === 0)
+      ? `<text x="${x(i)}" y="${H - 8}" class="ax" text-anchor="middle">J+${h.horizon}</text>` : "").join("");
+
+  // Une seule serie : pas de legende, le titre la nomme. Seul l'extremite est
+  // etiquetee, plutot qu'un nombre sur chaque point.
+  const last = rows.length - 1;
+  box.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" class="chart" role="img"
+         aria-label="Taux de réussite par échéance, de J+1 à J+${rows[last].horizon}">
+      ${ticks}${xlab}
+      <path d="${path}" class="line"/>
+      ${pts}
+      <text x="${x(last) + 10}" y="${y(rows[last].accuracy || 0) + 4}" class="endlab">${pct(rows[last].accuracy)}</text>
+      <text x="${x(0) + 10}" y="${y(rows[0].accuracy || 0) - 10}" class="endlab">${pct(rows[0].accuracy)}</text>
+    </svg>`;
+  attachTips(box);
+}
+
+/* Fiabilite : ce qui est annonce contre ce qui tombe. Le texte parlait de « rester
+   pres de la diagonale » alors qu'aucune diagonale n'etait dessinee -- deux barres
+   par tranche ne la montrent pas. C'est donc une vraie courbe de calibration, ou
+   l'ecart a la diagonale SE VOIT au lieu de se calculer. */
+function renderCalibration(bins) {
   const box = document.getElementById("reliability");
   if (!bins.length) {
     box.innerHTML = '<p class="empty">Pas encore assez de prédictions pour mesurer.</p>';
     return;
   }
-  const max = Math.max(...bins.map((b) => Math.max(b.predicted, b.observed)), 0.1);
-  box.innerHTML = bins.map((b) => {
-    const gap = Math.abs(b.predicted - b.observed);
-    return `<div class="rel-row${gap > 0.2 ? " is-off" : ""}">
-      <span class="rel-bin">${b.bin}</span>
-      <span class="rel-bars">
-        <i class="rel-said" style="width:${(b.predicted / max) * 100}%"></i>
-        <i class="rel-got" style="width:${(b.observed / max) * 100}%"></i>
-      </span>
-      <span class="rel-val">${pct(b.predicted)} → ${pct(b.observed)}</span>
-      <span class="rel-n">n=${b.n}</span>
-    </div>`;
-  }).join("") +
-    '<div class="rel-key"><span><i class="rel-said"></i>annoncé</span>' +
-    '<span><i class="rel-got"></i>observé</span></div>';
+  // Le repere est carre : les deux axes portent la meme grandeur, une echelle qui
+  // les etirerait differemment rendrait la diagonale mensongere.
+  const S = 320, M = 52, MT = 14, BOT = 34, inner = S - M - MT;
+  const x = (v) => M + v * inner;
+  const y = (v) => MT + (1 - v) * inner;
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((v) => `
+    <line x1="${x(v)}" x2="${x(v)}" y1="${y(0)}" y2="${y(1)}" class="grid"/>
+    <line x1="${x(0)}" x2="${x(1)}" y1="${y(v)}" y2="${y(v)}" class="grid"/>
+    <text x="${x(v)}" y="${y(0) + 16}" class="ax" text-anchor="middle">${v * 100}%</text>
+    <text x="${M - 8}" y="${y(v) + 4}" class="ax" text-anchor="end">${v * 100}%</text>`).join("");
+
+  // Le rayon porte l'effectif : une tranche a 12 000 predictions ne pese pas comme
+  // une tranche a 119, et une courbe a points egaux le laisserait croire.
+  const nMax = Math.max(...bins.map((b) => b.n));
+  const r = (n) => 4 + 6 * Math.sqrt(n / nMax);
+  const pts = bins.map((b) => {
+    const off = Math.abs(b.predicted - b.observed) > 0.15;
+    return `<circle cx="${x(b.predicted)}" cy="${y(b.observed)}" r="${r(b.n)}"
+              class="dot${off ? " is-off" : ""}"
+              data-tip="Annoncé ${pct(b.predicted)} → observé ${pct(b.observed)} · ${b.n} prédictions"/>`;
+  }).join("");
+
+  box.innerHTML = `
+    <svg viewBox="0 0 ${S} ${S - MT + BOT}" class="chart calib" role="img"
+         aria-label="Courbe de calibration : probabilité de Rouge annoncée contre fréquence observée">
+      ${ticks}
+      <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" class="ideal"/>
+      <text x="${x(0.30)}" y="${y(0.54)}" class="ideal-lab">calibration parfaite</text>
+      ${pts}
+      <text x="${x(0.5)}" y="${y(0) + 34}" class="ax-title" text-anchor="middle">probabilité annoncée</text>
+      <text transform="rotate(-90)" x="${-y(0.5)}" y="12" class="ax-title"
+            text-anchor="middle">fréquence observée</text>
+    </svg>`;
+  attachTips(box);
+}
+
+/* Une infobulle par marque : un graphique HTML est interactif par nature, et les
+   valeurs exactes n'ont pas a encombrer le dessin pour rester accessibles. */
+function attachTips(box) {
+  let tip = document.getElementById("chart-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "chart-tip";
+    tip.className = "chart-tip";
+    tip.hidden = true;
+    document.body.appendChild(tip);
+  }
+  box.querySelectorAll("[data-tip]").forEach((el) => {
+    el.addEventListener("mouseenter", (e) => {
+      tip.textContent = el.dataset.tip;
+      tip.hidden = false;
+      const b = e.target.getBoundingClientRect();
+      tip.style.left = Math.min(window.innerWidth - 260, b.left + window.scrollX) + "px";
+      tip.style.top = (b.top + window.scrollY - 38) + "px";
+    });
+    el.addEventListener("mouseleave", () => { tip.hidden = true; });
+  });
 }
 
 loadForecast();
