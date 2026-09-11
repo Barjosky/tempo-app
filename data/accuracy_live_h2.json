@@ -1,1 +1,1 @@
-{"by_horizon":[{"accuracy":1.0,"horizon":2,"n":5,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":null,"rouge_total":0}],"confusion":[[5,0,0],[0,0,0],[0,0,0]],"n":5,"period":"all","reliability":[]}
+{"by_horizon":[{"accuracy":1.0,"horizon":2,"n":3,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":null,"rouge_total":0}],"confusion":[[3,0,0],[0,0,0],[0,0,0]],"n":3,"period":"all","reliability":[]}
