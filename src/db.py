@@ -82,6 +82,34 @@ CREATE TABLE IF NOT EXISTS model_runs (
     metrics_json TEXT
 );
 
+-- Indisponibilites de production publiees par RTE, UNE LIGNE PAR PALIER de puissance :
+-- un arret ne retire pas la meme puissance du premier au dernier jour, et le palier est
+-- la maille ou RTE le dit.
+--
+-- La cle porte la VERSION, et c'est tout l'interet de la table. Un arret est republie a
+-- chaque revision ; ne garder que la derniere donnerait le savoir d'AUJOURD'HUI sur un
+-- jour passe, y compris les avaries declarees apres coup. En conservant les versions
+-- avec leur `publication_date`, on peut ne retenir que ce qui etait publie le jour ou la
+-- prediction aurait ete faite -- meme exigence que le `lead` de la table weather.
+CREATE TABLE IF NOT EXISTS unavailabilities (
+    identifier TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    palier_start TEXT NOT NULL,
+    palier_end TEXT NOT NULL,
+    publication_date TEXT NOT NULL,
+    fuel_type TEXT,
+    unavailability_type TEXT,
+    event_status TEXT,
+    unit_name TEXT,
+    installed_mw REAL,
+    unavailable_mw REAL,
+    fetched_at TEXT,
+    PRIMARY KEY (identifier, version, palier_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_indispo_pub ON unavailabilities(publication_date);
+CREATE INDEX IF NOT EXISTS idx_indispo_fin ON unavailabilities(palier_end);
+
 CREATE INDEX IF NOT EXISTS idx_pred_target ON predictions(target_date);
 CREATE INDEX IF NOT EXISTS idx_days_season ON days(season);
 """
@@ -166,6 +194,28 @@ def upsert_conso(conn, rows):
                                              conso.prevision_j1_peak_mw),
              nucleaire_mw = COALESCE(excluded.nucleaire_mw, conso.nucleaire_mw),
              source = excluded.source, fetched_at = excluded.fetched_at""",
+        rows,
+    )
+    conn.commit()
+
+
+def upsert_unavailabilities(conn, rows):
+    """Ecrit les paliers d'indisponibilite. Une version deja connue est reecrite a
+    l'identique : RTE ne revise pas une version, il en publie une nouvelle."""
+    conn.executemany(
+        """INSERT INTO unavailabilities
+           (identifier, version, palier_start, palier_end, publication_date, fuel_type,
+            unavailability_type, event_status, unit_name, installed_mw, unavailable_mw,
+            fetched_at)
+           VALUES (:identifier, :version, :palier_start, :palier_end, :publication_date,
+                   :fuel_type, :unavailability_type, :event_status, :unit_name,
+                   :installed_mw, :unavailable_mw, :fetched_at)
+           ON CONFLICT(identifier, version, palier_start) DO UPDATE SET
+             palier_end = excluded.palier_end,
+             publication_date = excluded.publication_date,
+             event_status = excluded.event_status,
+             unavailable_mw = excluded.unavailable_mw,
+             fetched_at = excluded.fetched_at""",
         rows,
     )
     conn.commit()

@@ -59,7 +59,155 @@ FEATURE_NAMES = [
     # de 1, le Rouge se place plus vite que le Blanc, donc une journee tendue penche
     # Rouge ; au-dessous, elle penche Blanc.
     "blanc_pressure_hiver", "quota_arbitrage",
+    # Offre PROSPECTIVE. Tout ce qui precede cote offre (`nuclear_recent_mw`) regarde ce
+    # que le parc a RECEMMENT produit : un proxy retrospectif, qui apprend un arret le
+    # jour ou il commence. Ces colonnes-ci viennent du calendrier d'indisponibilites
+    # publie par RTE : elles disent ce qui sera a l'arret le jour J, et elles le disent
+    # dix jours avant. Vides (NaN) si le projet tourne sans cle RTE.
+    "offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanned_mw",
+    "offline_total_mw", "margin_rte_mw",
 ]
+
+
+class IndispoStore:
+    """Puissance a l'arret le jour T, telle que RTE l'avait PUBLIEE le jour R.
+
+    Reconstitue l'etat du calendrier d'indisponibilites a chaque date de prediction.
+    Le principe tient en une phrase : on balaie les dates de prediction dans l'ordre
+    chronologique en absorbant les publications au fur et a mesure, de sorte qu'a
+    aucun moment l'etat ne contient une revision publiee plus tard. Demander
+    aujourd'hui « qu'est-ce qui etait a l'arret le 12 janvier » donnerait la reponse
+    CORRIGEE, avaries declarees apres coup comprises, et gonflerait le backtest.
+
+    Le balayage est incremental (l'etat se met a jour, il n'est pas recalcule) et les
+    arrets termines sont oublies : le cout ne depend pas de la profondeur d'historique.
+    """
+
+    # Le calendrier ne commence pas en meme temps que les publications : un arret
+    # commence en 2019 et courant en janvier 2020 n'a jamais ete publie dans la fenetre
+    # servie par l'API. Les premieres semaines sont donc SOUS-estimees, pas justes --
+    # on les rend a NaN plutot que de les rendre fausses.
+    AMORCE_JOURS = 60
+
+    def __init__(self, conn, horizon_max=None, amorce=None):
+        self.horizon_max = horizon_max or config.MAX_HORIZON
+        self.amorce = self.AMORCE_JOURS if amorce is None else amorce
+        self.grid = {}
+        self._normal_cache = {}
+        self._jour = {}
+        tables = {r["name"] for r in
+                  conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "unavailabilities" not in tables:
+            return
+        bornes = conn.execute("""SELECT MIN(publication_date) p0, MAX(palier_end) f
+                                 FROM unavailabilities""").fetchone()
+        if not bornes or not bornes["p0"]:
+            return
+        debut = date.fromisoformat(bornes["p0"]) + timedelta(days=self.amorce)
+        fin = max(date.fromisoformat(bornes["f"][:10]), debut)
+        self._balayer(conn, debut, fin)
+
+    def _balayer(self, conn, debut, fin):
+        # Le curseur est parcouru en flux, pas charge d'un bloc : l'historique complet
+        # represente des centaines de milliers de paliers.
+        curseur = conn.execute(
+            """SELECT identifier, version, palier_start, palier_end, publication_date,
+                      fuel_type, unavailability_type, event_status, unavailable_mw
+               FROM unavailabilities
+               ORDER BY publication_date, identifier, version, palier_start""")
+        ligne = curseur.fetchone()
+        actifs = {}
+        n = self.horizon_max + 1
+        for run_date in calendrier.daterange(debut, fin):
+            limite = run_date.isoformat()
+            while ligne is not None and ligne["publication_date"] <= limite:
+                self._absorber(actifs, ligne)
+                ligne = curseur.fetchone()
+            ordinal = run_date.toordinal()
+            self._remplir(actifs, run_date, ordinal, n)
+            # Un arret dont tous les paliers sont termines ne peut plus rien changer.
+            # S'il est revise plus tard, la revision le remettra dans l'etat.
+            for ident in [i for i, r in actifs.items() if r["fin"] < ordinal]:
+                del actifs[ident]
+
+    @staticmethod
+    def _absorber(actifs, ligne):
+        ident, version = ligne["identifier"], ligne["version"]
+        courant = actifs.get(ident)
+        if courant is None or courant["version"] != version:
+            courant = actifs[ident] = {
+                "version": version,
+                "nuc": ligne["fuel_type"] == "NUCLEAR",
+                "fortuit": ligne["unavailability_type"] == "UNPLANNED",
+                # DISMISSED = arret annule. Le retenir ferait perdre au parc une
+                # puissance qu'il n'a jamais perdue.
+                "vif": ligne["event_status"] != "DISMISSED",
+                "segs": [], "fin": -1,
+            }
+        mw = ligne["unavailable_mw"]
+        if mw is None:
+            return
+        try:
+            o0 = date.fromisoformat(ligne["palier_start"]).toordinal()
+            o1 = date.fromisoformat(ligne["palier_end"]).toordinal()
+        except ValueError:
+            return
+        courant["segs"].append((o0, o1, float(mw)))
+        courant["fin"] = max(courant["fin"], o1)
+
+    def _remplir(self, actifs, run_date, ordinal, n):
+        """Somme les puissances a l'arret sur la fenetre [R, R+horizon_max].
+
+        Tableaux de DIFFERENCES : un palier couvre typiquement toute la fenetre, et
+        l'ajouter jour par jour coutait onze fois plus cher pour le meme resultat.
+        """
+        dn = [0.0] * (n + 1)
+        dt = [0.0] * (n + 1)
+        du = [0.0] * (n + 1)
+        for rec in actifs.values():
+            if not rec["vif"]:
+                continue
+            for o0, o1, mw in rec["segs"]:
+                i0 = max(0, o0 - ordinal)
+                i1 = min(n - 1, o1 - ordinal)
+                if i1 < i0:
+                    continue
+                dt[i0] += mw
+                dt[i1 + 1] -= mw
+                if rec["nuc"]:
+                    dn[i0] += mw
+                    dn[i1 + 1] -= mw
+                if rec["fortuit"]:
+                    du[i0] += mw
+                    du[i1 + 1] -= mw
+        nuc = tot = fortuit = 0.0
+        for i in range(n):
+            nuc += dn[i]
+            tot += dt[i]
+            fortuit += du[i]
+            self.grid[(run_date, run_date + timedelta(days=i))] = (nuc, tot, fortuit)
+        self._jour[run_date] = self.grid[(run_date, run_date)][0]
+
+    def etat(self, run_date, target):
+        """(nucleaire, total, fortuit) a l'arret le jour T, connu le jour R. NaN si rien."""
+        v = self.grid.get((run_date, target))
+        return v if v is not None else (float("nan"),) * 3
+
+    def normale_nucleaire(self, run_date):
+        """Puissance nucleaire typiquement a l'arret ce mois-la, saisons ANTERIEURES.
+
+        Le nombre brut de MW a l'arret ne dit rien seul : vingt gigawatts en juillet est
+        la routine des visites decennales, vingt gigawatts en janvier est une crise.
+        """
+        season = calendrier.season_of(run_date)
+        cle = (season, run_date.month)
+        if cle not in self._normal_cache:
+            start = calendrier.season_start(season)
+            vals = [v for d, v in self._jour.items()
+                    if d < start and d.month == run_date.month]
+            self._normal_cache[cle] = (float(np.median(vals)) if len(vals) >= 20
+                                       else float("nan"))
+        return self._normal_cache[cle]
 
 
 class FeatureStore:
@@ -106,6 +254,7 @@ class FeatureStore:
                 "prevision_j1_peak_mw": (r["prevision_j1_peak_mw"]
                                          if "prevision_j1_peak_mw" in cols else None),
             }
+        self.indispo = IndispoStore(conn)
         self.demand_coef = self.wind_coef = self.solar_coef = None
         self.wind_sigma, self.solar_sigma = {}, {}
         self._climatology()
@@ -704,6 +853,18 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
     budget_ratio = (state["rouge_left"] / (1.0 + colder_ahead)
                     if colder_ahead == colder_ahead else float("nan"))
 
+    # Offre prospective : ce que RTE annonce a l'arret le jour T, su le jour R. La
+    # marge qui en decoule est la premiere du projet a etre reellement PREVISIONNELLE
+    # des deux cotes -- une demande prevue face a une offre annoncee.
+    offline_nuc, offline_tot, offline_unplanned = store.indispo.etat(run_date, target)
+    offline_normal = store.indispo.normale_nucleaire(run_date)
+    offline_nuc_anomaly = (offline_nuc - offline_normal
+                           if offline_nuc == offline_nuc and offline_normal == offline_normal
+                           else float("nan"))
+    margin_rte = (config.NUCLEAR_INSTALLED_MW - offline_nuc - residual_mw
+                  if offline_nuc == offline_nuc and residual_mw == residual_mw
+                  else float("nan"))
+
     xmas = int((target.month == 12 and target.day >= 20) or (target.month == 1 and target.day <= 3))
     holiday_adj = int(calendrier.is_holiday(target - timedelta(days=1))
                       or calendrier.is_holiday(target + timedelta(days=1)))
@@ -743,6 +904,7 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         colder_ahead, budget_ratio,
         rouge_slack if rouge_slack is not None else float("nan"), rouge_forced,
         blanc_pressure_hiver, quota_arbitrage,
+        offline_nuc, offline_nuc_anomaly, offline_unplanned, offline_tot, margin_rte,
     ]
     return np.array(row, dtype=float)
 

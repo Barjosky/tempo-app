@@ -6,7 +6,7 @@ regarde vers l'avenir, un filtre qui ne filtre pas.
 """
 import sys
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import fixtures
+import ingest_rte
 from src import db, features, model
+from src.sources import rte
 
 _STORE = {}
 
@@ -264,7 +266,7 @@ def test_le_perimetre_de_notation_est_le_meme_partout():
         f"""SELECT p.target_date AS date FROM days d
             JOIN (SELECT date AS target_date FROM days) p ON p.target_date = d.date
             WHERE d.color IS NOT NULL {web.period_clause('eligibles')}""")}
-    par_python = {d.isoformat() for d, info in _STORE["store"].days.items()
+    par_python = {d.isoformat() for d, info in store().days.items()
                   if info["color"] is not None
                   and rules.rouge_possible(d, info["is_holiday"])}
     assert par_sql == par_python, (
@@ -273,7 +275,7 @@ def test_le_perimetre_de_notation_est_le_meme_partout():
 
     # Et `evaluables()` doit s'appuyer sur le meme predicat.
     metas = [{"target": d, "is_holiday": info["is_holiday"]}
-             for d, info in sorted(_STORE["store"].days.items())]
+             for d, info in sorted(store().days.items())]
     ev = backtest.evaluables(metas)
     assert {m["target"].isoformat() for m, k in zip(metas, ev) if k} >= par_python
 
@@ -365,11 +367,11 @@ def test_les_deux_pressions_de_quota_sont_comparables():
     # Et le rapport doit disparaitre hors fenetre plutot que de valoir zero : passe le
     # 31 mars aucun Rouge n'est possible, l'arbitrage n'a plus d'objet.
     i = features.FEATURE_NAMES.index("quota_arbitrage")
-    store = _STORE["store"]
+    base = store()
     for cible, dedans in ((date(2026, 1, 15), True), (date(2026, 6, 15), False)):
         run = cible - timedelta(days=3)
-        etat = store.season_state(run)
-        ligne = features.build_row(store, run, cible, etat,
+        etat = base.season_state(run)
+        ligne = features.build_row(base, run, cible, etat,
                                    np.random.default_rng(0), True)
         if ligne is None:
             continue
@@ -462,3 +464,165 @@ def test_l_heure_affichee_est_celle_du_workflow():
     assert sorted(config.SCHEDULES_UTC) == sorted(attendus), (
         f"config.SCHEDULES_UTC vaut {config.SCHEDULES_UTC} alors que le workflow "
         f"tourne a {attendus} UTC")
+
+
+def test_chaque_echeance_est_jugee_par_son_modele():
+    """Avec une coupure d'echeance, une ligne courte et une ligne longue doivent etre
+    jugees par DEUX modeles differents.
+
+    L'astuce du test : la meme ligne de features est presentee deux fois, en ne
+    changeant que l'echeance declaree dans le meta. Si l'aiguillage fonctionne, les
+    deux probabilites different -- puisque seules deux modeles distincts peuvent
+    expliquer un ecart a entree identique. Sans cette precaution, un test verifierait
+    seulement que le code ne plante pas.
+    """
+    base = store()
+    X, y, meta = features.build_dataset(
+        base, date(config.FIRST_SEASON, 9, 1), date(2024, 8, 31))
+
+    gbm = model.TempoModel(n_seeds=1, horizon_split=3).fit(X, y, meta)
+    assert gbm.clf_court is not None, "les deux bandes auraient du etre entrainees"
+
+    # Une ligne d'HIVER : sur un jour de septembre le masque contractuel ecrase les
+    # deux sorties a la meme valeur, et le test ne prouverait plus rien.
+    i = next(k for k, m in enumerate(meta)
+             if m["target"].month == 1 and m["target"].weekday() < 5)
+    ligne = X[i:i + 1]
+    base = dict(meta[i])
+    court = [dict(base, horizon=2)]
+    long_ = [dict(base, horizon=7)]
+    p_court = gbm.predict_proba(ligne, court)
+    p_long = gbm.predict_proba(ligne, long_)
+    assert not np.allclose(p_court, p_long), (
+        "les deux echeances rendent la meme probabilite : l'aiguillage ne fait rien")
+
+    # Et sans coupure, la meme entree doit donner la meme sortie aux deux echeances.
+    plat = model.TempoModel(n_seeds=1, horizon_split=None).fit(X, y, meta)
+    assert plat.clf_court is None
+    assert np.allclose(plat.predict_proba(ligne, court),
+                       plat.predict_proba(ligne, long_)), (
+        "sans coupure, l'echeance du meta ne devrait rien changer")
+
+
+def _palier(ident, version, publie, debut, fin, mw,
+            fuel="NUCLEAR", nature="PLANNED", statut="ACTIVE"):
+    return {
+        "identifier": ident, "version": version, "palier_start": debut,
+        "palier_end": fin, "publication_date": publie, "fuel_type": fuel,
+        "unavailability_type": nature, "event_status": statut, "unit_name": "UNITE",
+        "installed_mw": 1300.0, "unavailable_mw": mw, "fetched_at": "",
+    }
+
+
+def _base_indispo(lignes):
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    db.upsert_unavailabilities(conn, lignes)
+    return features.IndispoStore(conn, amorce=0)
+
+
+def test_une_revision_ne_remonte_pas_le_temps():
+    """Le test qui decide de l'honnetete du backtest.
+
+    RTE republie un arret a chaque revision : prolonge, aggrave, parfois annule. Si
+    l'etat du 11 janvier contenait deja la revision du 15, le modele « saurait » a
+    l'avance qu'un reacteur va rester a l'arret -- et le backtest annoncerait une
+    precision que la production n'atteindra jamais.
+    """
+    s = _base_indispo([
+        _palier("A", 1, "2020-12-01", "2021-01-10", "2021-01-20", 900.0),
+        _palier("A", 2, "2021-01-15", "2021-01-10", "2021-01-31", 1300.0),
+    ])
+    avant = s.etat(date(2021, 1, 11), date(2021, 1, 16))[0]
+    apres = s.etat(date(2021, 1, 16), date(2021, 1, 16))[0]
+    assert avant == 900.0, f"la v1 seule vaut 900 MW, obtenu {avant}"
+    assert apres == 1300.0, f"la v2 connue le 16 vaut 1300 MW, obtenu {apres}"
+    # Et le 26 janvier, que seule la v2 couvre : invisible depuis le 11.
+    assert s.etat(date(2021, 1, 11), date(2021, 1, 21))[0] == 0.0
+
+
+def test_un_arret_annule_ne_retire_aucune_puissance():
+    """DISMISSED = arret annule. Le compter ferait perdre au parc une puissance
+    qu'il n'a jamais perdue, et gonflerait la tension apparente de la journee."""
+    s = _base_indispo([
+        _palier("C", 1, "2020-12-05", "2021-01-14", "2021-01-18", 500.0,
+                statut="DISMISSED"),
+        _palier("D", 1, "2020-12-05", "2021-01-14", "2021-01-18", 200.0,
+                fuel="FOSSIL_GAS", nature="UNPLANNED"),
+    ])
+    nuc, total, fortuit = s.etat(date(2021, 1, 13), date(2021, 1, 16))
+    assert nuc == 0.0, f"l'arret annule ne doit rien retirer, obtenu {nuc}"
+    assert total == 200.0 and fortuit == 200.0
+
+
+def test_les_paliers_priment_sur_la_fenetre_entiere():
+    """Un arret long ne retire pas la meme puissance du premier au dernier jour.
+    Retenir la puissance maximale sur toute la fenetre la surestimerait."""
+    evenement = {
+        "identifier": "E", "version": 1, "publication_date": "2021-01-01T10:00:00Z",
+        "start_date": "2021-01-05T00:00:00Z", "end_date": "2021-01-15T00:00:00Z",
+        "fuel_type": "NUCLEAR", "unavailability_type": "PLANNED",
+        "event_status": "ACTIVE", "affected_asset_or_unit_installed_capacity": 1300,
+        "values": [
+            {"start_date": "2021-01-05T00:00:00Z", "end_date": "2021-01-09T00:00:00Z",
+             "unavailable_capacity": 1300},
+            {"start_date": "2021-01-10T00:00:00Z", "end_date": "2021-01-15T00:00:00Z",
+             "unavailable_capacity": 400},
+        ],
+    }
+    lignes = rte.paliers(evenement)
+    assert len(lignes) == 2, f"{len(lignes)} palier(s) au lieu de 2"
+    s = _base_indispo(lignes)
+    tot = s.etat(date(2021, 1, 4), date(2021, 1, 12))[0]
+    assert tot == 400.0, f"le second palier vaut 400 MW, obtenu {tot}"
+
+
+def test_le_jeton_de_continuation_ne_part_pas_en_parametre():
+    """RTE l'attend dans un en-tete et refuse tout parametre inconnu : le laisser
+    dans la query string ferait echouer toute collecte des la deuxieme page."""
+    vus = {}
+
+    def faux_urlopen(req, timeout=None):
+        vus["url"] = req.full_url
+        raise RuntimeError("stop")
+
+    original = rte.urllib.request.urlopen
+    rte.urllib.request.urlopen = faux_urlopen
+    rte._jeton["valeur"], rte._jeton["expire"] = "factice", 9e18
+    try:
+        try:
+            rte._get("/generation_unavailabilities",
+                     {"start_date": "x", "_suite": "JETON-INTERNE"}, retries=1)
+        except Exception:
+            pass
+    finally:
+        rte.urllib.request.urlopen = original
+        rte._jeton["valeur"], rte._jeton["expire"] = None, 0.0
+    assert "JETON-INTERNE" not in vus.get("url", ""), (
+        f"le jeton de continuation a fuite dans l'URL : {vus.get('url')}")
+
+
+def test_la_fenetre_de_publication_ne_va_jamais_dans_le_futur():
+    """RTE refuse une date de publication future, et le refus a coute un run entier.
+
+    La collecte demandait « jusqu'a demain » : les 81 fenetres d'historique sont
+    passees, la derniere a rendu UNADINFO_GENUN_F02, et l'echec a emporte la prevision
+    du jour avec lui. Le controle porte sur la borne elle-meme, pas sur le souvenir
+    d'avoir lu le message d'erreur.
+    """
+    horloge = datetime(2026, 9, 11, 12, 30, 0, tzinfo=timezone.utc)
+    fin = ingest_rte.borne_de_fin(horloge)
+    assert fin < horloge, f"la borne de fin doit etre dans le passe, obtenu {fin}"
+    # Et elle doit rester dans la journee : reculer jusqu'a minuit perdrait les
+    # declarations de la matinee, c'est-a-dire les avaries fortuites.
+    assert fin.date() == horloge.date(), f"borne reculee d'un jour entier : {fin}"
+
+
+def test_les_dates_envoyees_a_rte_portent_le_suffixe_z():
+    """Le decalage explicite (« +02:00 ») est refuse : UNADINFO_GENUN_F03."""
+    jour = rte._horodatage(date(2026, 9, 11))
+    instant = rte._horodatage(datetime(2026, 9, 11, 12, 30, 5, tzinfo=timezone.utc))
+    for rendu in (jour, instant):
+        assert rendu.endswith("Z"), f"format refuse par RTE : {rendu}"
+        assert "+" not in rendu, f"decalage explicite refuse par RTE : {rendu}"
+    assert jour.endswith("T00:00:00Z") and instant.endswith("T12:30:05Z")

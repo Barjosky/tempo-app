@@ -95,7 +95,8 @@ class TempoModel:
     # page sous les fausses alertes. Le balayage complet est dans analyse_seuils.py.
     def __init__(self, seed=0, class_weight=None, rouge_threshold=None,
                  blanc_threshold=None, excluded=None, winter_weight=None,
-                 n_seeds=None, force_quota=None, two_stage=None):
+                 n_seeds=None, force_quota=None, two_stage=None,
+                 horizon_split=None):
         self.seed = seed
         self.excluded = config.EXCLUDED_FEATURES if excluded is None else excluded
         self.winter_weight = (config.WINTER_WEIGHT if winter_weight is None
@@ -104,13 +105,17 @@ class TempoModel:
         self.force_quota = (config.FORCE_QUOTA_ROUGE if force_quota is None
                             else force_quota)
         self.two_stage = config.TWO_STAGE if two_stage is None else two_stage
+        self.horizon_split = (config.HORIZON_SPLIT if horizon_split is None
+                              else horizon_split)
         self.class_weight = class_weight
         self.rouge_threshold = (config.ROUGE_ALERT_THRESHOLD if rouge_threshold is None
                                 else rouge_threshold)
         self.blanc_threshold = (config.BLANC_ALERT_THRESHOLD if blanc_threshold is None
                                 else blanc_threshold)
-        self.clf = None       # liste de modeles, moyennee a la prediction
+        self.clf = None        # liste de modeles, moyennee a la prediction
         self.clf_tendu = None  # second etage : Blanc contre Rouge
+        self.clf_court = None  # modele dedie aux echeances courtes
+        self.dead_court = None  # ses colonnes vides a lui, distinctes de l'autre bande
         self.dead_columns = None
 
     def _base(self, seed):
@@ -162,31 +167,69 @@ class TempoModel:
         demarrer. Les colonnes neutralisees sont figees a l'entrainement, sinon la
         prediction sur une seule ligne en declarerait d'autres au hasard des NaN.
         """
+        return self._applique(X, self.dead_columns)
+
+    def _masque_mort(self, X, annonce=""):
+        """Colonnes a neutraliser pour CE jeu : entierement vides, ou exclues."""
         X = np.asarray(X, dtype=float)
-        if self.dead_columns is None:
-            exclues = np.array([n in self.excluded for n in features.FEATURE_NAMES])
-            if len(exclues) != X.shape[1]:
-                exclues = np.zeros(X.shape[1], dtype=bool)
-            self.dead_columns = np.isnan(X).all(axis=0) | exclues
-            vides = [features.FEATURE_NAMES[i]
-                     for i, mort in enumerate(self.dead_columns)
-                     if mort and i < len(features.FEATURE_NAMES)]
-            if vides:
-                print(f"  features neutralisees : {', '.join(vides)}")
-        if self.dead_columns.any():
+        exclues = np.array([n in self.excluded for n in features.FEATURE_NAMES])
+        if len(exclues) != X.shape[1]:
+            exclues = np.zeros(X.shape[1], dtype=bool)
+        masque = np.isnan(X).all(axis=0) | exclues
+        vides = [features.FEATURE_NAMES[i] for i, mort in enumerate(masque)
+                 if mort and i < len(features.FEATURE_NAMES)]
+        if vides:
+            print(f"  features neutralisees{annonce} : {', '.join(vides)}")
+        return masque
+
+    def _applique(self, X, masque):
+        X = np.asarray(X, dtype=float)
+        if masque is not None and masque.any():
             X = X.copy()
-            X[:, self.dead_columns] = 0.0
+            X[:, masque] = 0.0
         return X
 
+    def _ensemble(self, Xn, y, meta, decalage=0):
+        """Plusieurs modeles ne differant que par leur graine.
+
+        Un seul arbre boostee depend du hasard de ses coupures, et c'est ce hasard
+        qui fait qu'un hiver passe et que le suivant casse ; la moyenne l'attenue.
+        """
+        return [self._fit_calibrated(Xn, y, meta, self.seed + decalage + k)
+                for k in range(max(1, self.n_seeds))]
+
     def fit(self, X, y, meta):
-        self.dead_columns = None
-        Xn = self._neutralise(X)
         y = np.array(y)
-        # Plusieurs modeles ne differant que par leur graine. Un seul arbre boostee
-        # depend du hasard de ses coupures, et c'est ce hasard qui fait qu'un hiver
-        # passe et que le suivant casse ; la moyenne l'attenue.
-        self.clf = [self._fit_calibrated(Xn, y, meta, self.seed + k)
-                    for k in range(max(1, self.n_seeds))]
+        X = np.asarray(X, dtype=float)
+
+        # Une meme colonne n'a pas la meme valeur selon l'echeance. A J+1 la prevision
+        # de consommation est juste et la charge residuelle devient solidement porteuse
+        # (+0,164, pire saison +0,024) ; a J+10 c'est du bruit, et elle tombe a
+        # +0,055 avec une pire saison a -0,094. Le modele unique traite pourtant les
+        # dix echeances pareil : `horizon` est bien une colonne, mais un arbre doit
+        # alors depenser sa capacite a redecouvrir cette interaction dans chaque
+        # branche. Couper l'apprentissage en deux la lui donne d'emblee.
+        h = np.array([m["horizon"] for m in meta])
+        court = h <= (self.horizon_split or 0)
+        # Il faut assez de lignes DES DEUX cotes, sinon deux modeles faibles valent
+        # moins qu'un seul entraine sur tout.
+        if self.horizon_split and court.sum() >= 400 and (~court).sum() >= 400:
+            # Chaque bande a ses propres colonnes vides : `rte_forecast_mw` n'existe
+            # qu'a J+1, elle est donc INTEGRALEMENT vide dans la bande longue. Un
+            # masque global ne le verrait pas -- la colonne a des valeurs quelque part
+            # -- et le binning echouerait sur la bande ou elle n'en a aucune.
+            self.dead_court = self._masque_mort(X[court], " (J+1 a J+%d)" % self.horizon_split)
+            self.dead_columns = self._masque_mort(X[~court], " (au-dela de J+%d)" % self.horizon_split)
+            mc = [m for m, k in zip(meta, court) if k]
+            ml = [m for m, k in zip(meta, court) if not k]
+            self.clf_court = self._ensemble(
+                self._applique(X[court], self.dead_court), y[court], mc, 200)
+            self.clf = self._ensemble(
+                self._applique(X[~court], self.dead_columns), y[~court], ml, 300)
+        else:
+            self.dead_columns = self._masque_mort(X)
+            self.dead_court = None
+            self.clf = self._ensemble(self._applique(X, self.dead_columns), y, meta)
 
         if self.two_stage:
             # Second etage : Blanc ou Rouge, entraine sur les SEULS jours tendus.
@@ -218,8 +261,16 @@ class TempoModel:
         return out / len(modeles)
 
     def predict_proba(self, X, meta):
-        Xn = self._neutralise(X)
+        Xn = self._applique(X, self.dead_columns)
         ordered = self._moyenne(self.clf, Xn, CLASSES)
+
+        if self.clf_court is not None:
+            # Chaque ligne est jugee par le modele de sa bande d'echeance, avec le
+            # masque de colonnes vides de cette bande-la.
+            court = np.array([m["horizon"] <= self.horizon_split for m in meta])
+            if court.any():
+                Xc = self._applique(X, self.dead_court)
+                ordered[court] = self._moyenne(self.clf_court, Xc[court], CLASSES)
 
         if self.clf_tendu:
             # La masse « pas Bleu » vient du premier etage, sa repartition du second.

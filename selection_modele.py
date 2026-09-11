@@ -64,9 +64,12 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 # Deja mesure et ecarte : retrait des features d'offre (ameliore la moyenne, degrade
 #   le plancher), ponderation vers l'hiver (degrade 2024-2025), ensemble sans
 #   diversification (strictement sans effet).
-RETENU = dict(excluded=[], force_quota=True, n_seeds=5)
+RETENU = dict(excluded=config.EXCLUDED_FEATURES, force_quota=True,
+              n_seeds=5, two_stage=False, horizon_split=None)
 
 ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
+INDISPO = ["offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanned_mw",
+           "offline_total_mw", "margin_rte_mw"]
 
 # La cible du jour est le Blanc, seule couleur sous les 50 % de rappel : 45 %, contre
 # 81 % pour le Bleu et 82 % pour le Rouge. Son erreur se partage en deux moities
@@ -82,13 +85,61 @@ ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 #
 # Le denominateur corrige s'applique aux DEUX candidats : c'est une correction, pas une
 # option. Ce qui est mesure ici est l'apport des deux features d'arbitrage.
-# MESURE, ECARTE. L'arbitrage fait ce pour quoi il est concu -- rappel du Blanc
-# 44 -> 46 %, et les deux directions d'erreur reculent ensemble -- mais 2023-2024
-# passe de 0,846 a 0,942, donc le plancher se degrade de 0,911 a 0,942, et le rappel
-# Rouge perd deux points. Les features restent, neutralisees par config.
+# Deja mesure et ECARTE : l'arbitrage Blanc/Rouge. Il fait ce pour quoi il est concu
+# -- rappel du Blanc 44 -> 46 %, les deux directions d'erreur reculant ensemble --
+# mais 2023-2024 passe de 0,846 a 0,942, donc le plancher se degrade de 0,911 a 0,942.
+#
+# CE QUI EST MESURE ICI : couper l'apprentissage par bande d'echeance.
+#
+# Une meme colonne n'a pas la meme valeur selon l'echeance. Mesure a J+1 seulement, la
+# charge residuelle rend +0,164 de log-loss avec une pire saison a +0,024 -- solidement
+# porteuse. Sur les dix echeances confondues elle tombe a +0,055 avec une pire saison a
+# -0,094, donc instable. La raison est evidente une fois vue : a J+1 la prevision de
+# consommation est juste, a J+10 c'est du bruit.
+#
+# Le modele unique traite pourtant les dix echeances pareil. `horizon` est bien une
+# colonne, mais un arbre doit alors redecouvrir cette interaction dans chaque branche,
+# au lieu de la recevoir d'emblee.
+#
+# Le contre-argument, qu'il faut mesurer et non supposer : deux modeles voient chacun
+# moins de lignes, et deux modeles faibles peuvent valoir moins qu'un seul entraine sur
+# tout. D'ou deux coupures testees, a J+3 et a J+5.
+# MESURE, ECARTE. Toutes les moyennes s'ameliorent et le plancher se degrade quand meme :
+# 2024-2025 gagne (0,628 -> 0,585) pendant que 2023-2024 explose (0,841 -> 1,142). Deux
+# modeles voient chacun moins de lignes, et la fragmentation coute plus que la
+# specialisation ne rapporte. L'idee de depart tient -- le froid pilote les jours Rouge,
+# mesure a J+1 -- c'est ce mecanisme-la qui ne la sert pas.
+#
+# CE QUI EST MESURE ICI : le calendrier d'indisponibilites publie par RTE.
+#
+# Tout le cote offre du modele etait jusqu'ici RETROSPECTIF. `nuclear_recent_mw` lit ce
+# que le parc a produit les quatorze derniers jours : si douze reacteurs s'arretent
+# mardi, la colonne l'apprend mardi, jamais avant. Or la question posee est « que se
+# passera-t-il dans dix jours ». Un proxy du passe ne peut pas y repondre, et ces
+# colonnes-la ont d'ailleurs mesure NEGATIF au diagnostic de permutation.
+#
+# Le calendrier RTE, lui, est de l'information sur le futur : les arrets programmes sont
+# publies des mois a l'avance, les fortuits des leur declaration. La marge devient alors
+# previsionnelle des DEUX cotes -- une demande prevue face a une offre annoncee.
+#
+# Le contre-argument, qu'il faut mesurer : cinq colonnes de plus sur quatre saisons
+# evaluables, c'est de quoi surajuster. Et l'hiver 2022-2023, ou le parc s'est effondre,
+# est aussi celui ou les Rouge ont ete les plus nombreux : le modele peut apprendre
+# cette coincidence-la plutot que le mecanisme.
+#
+# MESURE, RETENU. Le plancher se releve : 0,912 -> 0,883, et le Blanc progresse dans
+# ses DEUX directions d'erreur a la fois (54 -> 57 % de rappel, 27 -> 25 % vu Bleu,
+# 20 -> 18 % vu Rouge), ce qui signale de l'information ajoutee plutot qu'un arbitrage
+# deplace. Les colonnes restent donc actives (elles ne sont pas dans EXCLUDED_FEATURES).
+#
+# Deux reserves, ecrites ici pour qu'elles ne se perdent pas. Le gain est concentre :
+# deux saisons gagnent, deux perdent, et celles qui perdent sont les deux plus faciles.
+# Surtout, 2022-2023 se DEGRADE (0,342 -> 0,359) -- l'hiver de la corrosion, celui ou
+# ces colonnes auraient du briller. Hypothese non mesuree : cet hiver-la
+# l'indisponibilite etait si generale qu'elle ne discriminait plus les jours entre eux.
 CANDIDATS = [
-    ("sans arbitrage", dict(RETENU, excluded=ARBITRAGE, two_stage=False)),
-    ("arbitrage B/R", dict(RETENU, excluded=[], two_stage=False)),
+    ("sans le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES + INDISPO)),
+    ("avec le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES)),
 ]
 
 

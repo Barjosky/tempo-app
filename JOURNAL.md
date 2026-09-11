@@ -113,6 +113,7 @@ apparaît et 2023-2024 passe de 1,053 à 0,809.
 | Ensemble sans diversification | strictement identique | écarté (voir ci-dessus) |
 | Modèle à deux étages (tendu ? puis Blanc ou Rouge ?) | moyenne 0,670 → 0,709, **pire saison 0,902 → 1,104** | écarté |
 | Arbitrage Blanc/Rouge (`quota_arbitrage`) | rappel Blanc 44 → 46 %, **pire saison 0,911 → 0,942** | écarté |
+| Un modèle par bande d'échéance | moyennes toutes meilleures, **pire saison 0,909 → 1,028** | écarté |
 
 **Leçon de méthode.** J'ai d'abord conclu du contraire pour le nucléaire, à partir
 d'une mesure de permutation. Permuter une colonne sur un modèle **déjà entraîné** ne
@@ -262,6 +263,41 @@ Sans valeur, cette fois pour de bon. L'explication tient au tableau voisin :
 modèle de demande maison, calibré sur éCO2mix — la prévision de RTE ne dit rien
 qu'il ignore. Piste close.
 
+### Couper l'apprentissage par échéance : mesuré, écarté
+
+La suite logique de ce qui précède : si une colonne vaut à J+1 ce qu'elle ne vaut plus
+à J+10, donnons au modèle deux apprentissages séparés plutôt qu'un seul où il doit
+redécouvrir l'interaction dans chaque branche.
+
+| | moyenne | **pire saison** | exactitude | rappel R | préc. R | calibration |
+|---|---|---|---|---|---|---|
+| échéances mélangées | **0,681** | **0,909** | 72,1 % | 74 % | 74 % | 9,6 % |
+| coupure à J+3 | 0,757 | 1,142 | 72,6 % | 75 % | 75 % | 9,2 % |
+| coupure à J+5 | 0,730 | 1,028 | **72,7 %** | 75 % | 75 % | **9,2 %** |
+
+**Toutes les moyennes s'améliorent** — exactitude, rappel, précision, calibration — et
+pourtant c'est refusé. Le détail par saison dit pourquoi :
+
+| | 2022-2023 | 2023-2024 | 2024-2025 | 2025-2026 |
+|---|---|---|---|---|
+| mélangées | 0,345 | **0,841** | 0,628 | **0,909** |
+| coupure J+3 | 0,352 | 1,142 | **0,593** | 0,939 |
+| coupure J+5 | 0,370 | 0,939 | **0,585** | 1,028 |
+
+2024-2025 gagne nettement (0,628 → 0,585) et 2023-2024 explose (0,841 → 1,142). Deux
+modèles voient chacun moins de lignes, et la fragilité se paie sur la saison où le
+modèle était déjà le plus juste.
+
+**Ce que ça ne dit pas.** Ce n'est *pas* un démenti de l'idée que le froid pilote les
+jours Rouge — cette part reste mesurée et vraie à J+1. C'est un démenti du **mécanisme**
+choisi pour l'exploiter : séparer les jeux d'entraînement fragmente les données plus
+qu'il ne spécialise les modèles.
+
+**Piste qui reste ouverte** : une version qui ne fragmente pas. Bandes chevauchantes, ou
+un modèle unique complété d'une correction apprise sur les seules échéances courtes.
+Les moyennes disent qu'il y a quelque chose à prendre ; la pire saison dit que ce n'est
+pas comme ça.
+
 ### Ce que J+1 révèle en passant
 
 Le classement change beaucoup quand on ne regarde que l'échéance la plus fiable :
@@ -378,6 +414,117 @@ Blanc dépasse le seuil, alors que `decide()` laisse ensuite le Rouge écraser c
 d'entre eux. Les 65 % de rappel affichés ici ne sont donc pas les 45 % réellement
 obtenus dans la matrice de confusion — l'écart, ce sont les jours Blanc volés par le
 Rouge. **Le rappel du Blanc dépend du seuil Rouge autant que du sien.**
+
+## L'API RTE des indisponibilités : sondée avant d'être exploitée
+
+Seule source du projet qui demande une clé. Sondée avant d'écrire la moindre collecte,
+parce qu'une seule réponse pouvait tout invalider.
+
+| Question | Réponse |
+|---|---|
+| Authentification | **OK** — l'URL du jeton, absente du Swagger, était bien sur le même hôte |
+| Profondeur d'historique | **2020 → 2026, six hivers.** Suffisant |
+| Volume nucléaire | **420 arrêts sur 790** en 30 jours, toutes filières |
+| `publication_date` | **790/790 remplis.** La reconstitution point-in-time est possible |
+
+Arrêts par année (une semaine de janvier) : 387, 188, 241, 311, 372, 339, 240.
+Répartition : 662 programmés contre 128 fortuits.
+
+**Le format de date a coûté deux runs**, et la leçon n'est pas le format :
+
+| Envoyé | Réponse de RTE |
+|---|---|
+| `2026-09-11T00:00:00+02:00` | refus `UNADINFO_GENUN_F03` |
+| `2026-09-11T00:00:00Z` | **OK — 17 arrêts** |
+| `2026-09-11` | refus |
+
+La première sonde envoyait tous les paramètres d'un coup, recevait un 400, et
+concluait « API inexploitable ». Deux fautes : un 400 dit *mal formé*, pas *pas de
+données* — et surtout le code **jetait le corps de la réponse**, là où RTE explique
+son refus. Diagnostic supprimé, puis deviné à sa place. Remplacé par une échelle qui
+part de la requête nue et ajoute un paramètre à la fois.
+
+### Le piège, et comment il a été refermé
+
+`last_version=true` rend la **dernière** version de chaque arrêt — donc corrigée après
+coup. L'utiliser pour reconstituer le passé ferait fuiter du futur dans le backtest,
+exactement comme une prévision météo corrigée. La collecte garde donc **toutes** les
+versions (`last_version=false`, fenêtres en `PUBLICATION_DATE`) et l'état se rejoue
+chronologiquement : à aucun instant il ne contient une révision publiée plus tard.
+
+Ce que ça donne en base : **135 913 arrêts, 50 340 distincts — 2,7 versions par arrêt
+en moyenne**, dont 10 411 nucléaires, publiés du 1ᵉʳ janvier 2020 au 26 août 2026. Ces
+2,7 versions sont exactement ce qui aurait fuité sans la précaution.
+
+Deux refus de plus, tous deux payés d'un run :
+
+| Envoyé | Réponse |
+|---|---|
+| `end_date` = demain, en `PUBLICATION_DATE` | refus `UNADINFO_GENUN_F02` — *publication dates must be in the past* |
+| `continuation_token` en paramètre d'URL | à éviter : RTE l'attend en **en-tête** et refuse tout paramètre inconnu |
+
+La borne de fin est donc l'instant courant moins une minute. Reculer à minuit évitait
+aussi le refus mais perdait les déclarations de la matinée — donc les avaries
+fortuites, celles qui apportent le plus d'information. Trois tests verrouillent tout
+ça : la borne, le suffixe `Z`, et le jeton qui ne doit pas fuiter dans l'URL.
+
+**Et une leçon d'architecture, pas de format** : l'échec d'une seule fenêtre sur 82 a
+fait sauter collecte, entraînement, export et publication du jour. Une source
+facultative ne doit pas pouvoir faire ça. Elle prévient désormais et rend la main ; le
+rattrapage repart de la dernière publication *en base*, donc il repasse tout seul sur
+le trou.
+
+## Le calendrier des indisponibilités : mesuré, RETENU
+
+Tout le côté offre était jusqu'ici **rétrospectif**. `nuclear_recent_mw` lit ce que le
+parc a produit les quatorze derniers jours : si douze réacteurs s'arrêtent mardi, la
+colonne l'apprend mardi. La question posée est pourtant « que se passera-t-il dans dix
+jours ». Le calendrier RTE, lui, publie les arrêts programmés des mois à l'avance.
+
+Cinq colonnes : puissance nucléaire annoncée à l'arrêt le jour J, son écart à la
+normale du mois, la part fortuite, le total toutes filières, la marge qui en découle
+face à la charge résiduelle prévue.
+
+| | log-loss moy | **PIRE saison** | exactitude | rappel R | préc. R | écart calib. |
+|---|---|---|---|---|---|---|
+| Sans le calendrier RTE | 0,688 | **0,912** | 72,1 % | 75 % | 74 % | 9,7 % |
+| Avec le calendrier RTE | 0,684 | **0,883** | 72,6 % | 75 % | 75 % | 9,5 % |
+
+**Le plancher se relève : 0,912 → 0,883.** C'est le juge du projet, et il tranche pour.
+
+Le Blanc, faiblesse numéro un, progresse dans les deux directions d'erreur à la fois —
+ce qui est le signe qu'on a ajouté de l'information, pas déplacé un arbitrage :
+
+| | rappel B | préc. B | B vu Bleu | B vu Rouge |
+|---|---|---|---|---|
+| Sans | 54 % | 58 % | 27 % | 20 % |
+| Avec | **57 %** | 58 % | **25 %** | **18 %** |
+
+Détail par saison — et c'est là que l'honnêteté impose de ralentir :
+
+| | 2022-2023 | 2023-2024 | 2024-2025 | 2025-2026 |
+|---|---|---|---|---|
+| Sans | **0,342** | **0,868** | 0,630 | 0,912 |
+| Avec | 0,359 | 0,878 | **0,615** | **0,883** |
+
+Deux saisons gagnent, deux perdent. Les deux qui perdent sont les deux plus faciles ;
+les deux qui gagnent sont les deux plus dures, dont la pire. Le gain est **modeste et
+concentré**, pas général.
+
+Et un résultat que je n'avais pas prévu : **2022-2023 se dégrade**, alors que c'est
+l'hiver de la corrosion sous contrainte, celui où le parc s'est effondré — donc
+précisément celui où ces colonnes auraient dû briller. À ce stade je n'ai pas
+d'explication mesurée, seulement une hypothèse : cet hiver-là, l'indisponibilité était
+si générale qu'elle ne discriminait plus les jours entre eux.
+
+### Ce qui reste à vérifier sur ces colonnes
+
+135 913 arrêts ont rendu 135 934 paliers, soit **un pour un**. Ou bien les arrêts n'ont
+qu'un seul palier de puissance, ou bien `values` est absent de la réponse de liste et
+le repli sur la puissance **installée** surestime chaque arrêt partiel. Le backtest
+aime ces colonnes ; je ne sais pas encore exactement ce qu'elles contiennent. La
+collecte compte et affiche désormais la part de chacun — chiffre à lire au prochain
+passage complet.
 
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge

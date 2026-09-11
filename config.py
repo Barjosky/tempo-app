@@ -61,6 +61,12 @@ TARIFFS = {
 SEASON_START_MONTH = 9
 FIRST_SEASON = 2020  # profondeur de l'historique disponible via l'API
 
+# Puissance nucleaire installee en France, en MW (56 reacteurs depuis l'arret de
+# Fessenheim en 2020, soit toute la periode couverte par la base). Sert de reference
+# a `margin_rte_mw` : disponible = installe - annonce a l'arret. La valeur exacte
+# importe peu, elle est constante et le modele ne lit que des ecarts.
+NUCLEAR_INSTALLED_MW = 61370
+
 # Fenetre ou les jours Rouge sont possibles (1er nov -> 31 mars)
 ROUGE_WINDOW = ((11, 1), (3, 31))
 
@@ -149,6 +155,26 @@ N_SEEDS = 5
 # Reste implemente parce qu'il echange 5 points de rappel Rouge contre 3 de precision
 # d'alerte -- un compromis defendable si un jour on prefere alerter moins mais mieux.
 TWO_STAGE = False
+
+# Couper l'apprentissage en deux bandes d'echeance : J+1 a J+N d'un cote, le reste de
+# l'autre. A None, un seul modele apprend sur les dix echeances melangees.
+#
+# L'hypothese vient d'une mesure : a J+1, la charge residuelle rend +0,164 de log-loss
+# avec une pire saison a +0,024 (porteuse) ; sur toutes les echeances confondues elle
+# tombe a +0,055 avec une pire saison a -0,094 (instable). La prevision de consommation
+# est juste a J+1 et n'est plus que du bruit a J+10 -- le modele unique traite pourtant
+# les deux pareil.
+# MESURE, ECARTE. Toutes les moyennes s'ameliorent -- exactitude 72,1 -> 72,7 %, rappel
+# et precision Rouge +1 point, calibration 9,6 -> 9,2 % -- mais 2023-2024 explose de
+# 0,841 a 1,028 (coupure J+5) ou 1,142 (coupure J+3), et le plancher passe donc de 0,909
+# a 1,028. Deux modeles voient chacun moins de lignes : la fragmentation coute plus que
+# la specialisation ne rapporte.
+#
+# Ce n'est pas un dementi de l'idee -- le froid pilote bien les jours Rouge, et la
+# charge residuelle reste porteuse a J+1 -- mais du MECANISME choisi pour l'exploiter.
+# Le code reste en place : une version qui ne fragmente pas les donnees (bandes
+# chevauchantes, ou correction apprise sur les seules echeances courtes) reste a tenter.
+HORIZON_SPLIT = None
 
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
 # C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.

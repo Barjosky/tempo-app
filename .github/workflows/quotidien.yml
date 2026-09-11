@@ -42,6 +42,14 @@ on:
         description: "Mesurer la prevision RTE a J+1 seulement, la ou elle existe (long)"
         type: boolean
         default: false
+      sonde_rte:
+        description: "Sonder l'API RTE des indisponibilites : est-elle exploitable ?"
+        type: boolean
+        default: false
+      rte_complet:
+        description: "Rebalayer tout l'historique des indisponibilites RTE (long)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -96,6 +104,22 @@ jobs:
         if: inputs.reentrainer == true
         run: python ingest_conso.py
 
+      # Apres la constitution de l'historique, jamais avant : ce script cree
+      # store/tempo.db, et le faire tourner en amont ferait croire a l'etape
+      # precedente que le cache est plein et lui ferait sauter toute la collecte.
+      # Sans secret RTE il sort en silence et les colonnes d'offre restent a NaN.
+      - name: Collecter les indisponibilites de production (RTE)
+        env:
+          RTE_BASIC_AUTH: ${{ secrets.RTE_BASIC_AUTH }}
+          RTE_CLIENT_ID: ${{ secrets.RTE_CLIENT_ID }}
+          RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
+        run: |
+          if [ "${{ inputs.rte_complet }}" = "true" ]; then
+            python ingest_rte.py --complet
+          else
+            python ingest_rte.py
+          fi
+
       - name: Collecte du jour et prediction
         run: python collector.py
 
@@ -142,6 +166,17 @@ jobs:
       # Le seuil d'alerte n'a pas ete recale depuis la contrainte de quota, qui a
       # change les probabilites de fin d'hiver. Le cache se perime tout seul quand la
       # configuration bouge, donc `--refit` n'a pas a etre demande de memoire.
+      # A lancer AVANT de batir quoi que ce soit sur cette API : si son historique ne
+      # remonte pas assez loin, la colonne serait vide sur toutes les saisons
+      # d'entrainement et le backtest ne pourrait rien mesurer.
+      - name: Sonder l'API RTE des indisponibilites
+        if: inputs.sonde_rte == true
+        env:
+          RTE_BASIC_AUTH: ${{ secrets.RTE_BASIC_AUTH }}
+          RTE_CLIENT_ID: ${{ secrets.RTE_CLIENT_ID }}
+          RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
+        run: python sonde_rte.py
+
       - name: Recaler les seuils d'alerte
         if: inputs.seuils == true
         run: |
