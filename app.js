@@ -114,35 +114,59 @@ function estCalme(d) {
   return d.p[1] < 0.12 && d.p[2] < 0.05;
 }
 
-/* Un jour Rouge probable est l'information qui fait agir : on la sort des cartes. */
+/* Un jour Rouge probable est l'information qui fait agir : on la sort des cartes.
+
+   TROIS DEFAUTS CORRIGES ICI, tous vus au rendu d'un jeu d'hiver -- invisibles en
+   septembre, ou tout est Bleu :
+     - des qu'un Rouge apparaissait, les jours Blanc DISPARAISSAIENT du bandeau. La page
+       etait donc plus bavarde quand il n'y avait rien a dire que quand il y avait
+       quelque chose. Un Blanc coute pourtant 1,2 fois le tarif Bleu en heures pleines ;
+     - « Tout reste au tarif Bleu » s'affichait meme en annoncant trois jours Blanc,
+       dans la meme phrase ;
+     - « sur les 10 prochains jours » etait ecrit en dur d'un cote et valait
+       `days.length` de l'autre, qui compte AUSSI aujourd'hui. Les deux etaient faux. */
 function renderAlert(days) {
   const strip = document.getElementById("alert-strip");
+  // Aujourd'hui n'est pas un jour « prochain » : seules les echeances comptent.
+  const aVenir = days.filter((d) => d.horizon > 0).length;
   const rouges = days.filter((d) => d.color === 3);
-  if (!rouges.length) {
+  const blancs = days.filter((d) => d.color === 2);
+  const nomme = (d) => {
+    const f = fmtDate(d.date);
+    const quand = d.horizon === 0 ? "aujourd'hui" : `${f.dow} ${f.num} ${f.month}`;
+    const sur = (i) => d.official ? "(officiel)" : `(${pct(d.p[i])})`;
+    return `<b>${quand}</b> ${sur(d.color - 1)}`;
+  };
+
+  if (!rouges.length && !blancs.length) {
     // La reponse a « dois-je m'inquieter ? » doit se lire sans parcourir onze cartes.
     // Quand il n'y a rien, on le dit.
-    const blancs = days.filter((d) => d.color === 2).length;
-    const suite = blancs
-      ? `${blancs} jour${blancs > 1 ? "s" : ""} Blanc, aucun Rouge.`
-      : "Aucun jour Blanc ni Rouge.";
     strip.innerHTML = `<div class="calm">
         <span class="calm-mark" aria-hidden="true"></span>
-        <div><strong>Rien à signaler</strong> sur les ${days.length} prochains jours :
-          ${suite} Tout reste au tarif Bleu.</div>
+        <div><strong>Rien à signaler</strong> sur les ${aVenir} prochains jours :
+          aucun jour Blanc ni Rouge, tout reste au tarif Bleu.</div>
       </div>`;
     return;
   }
-  const items = rouges.map((d) => {
-    const f = fmtDate(d.date);
-    const quand = d.horizon === 0 ? "aujourd'hui" : `${f.dow} ${f.num} ${f.month}`;
-    return d.official ? `<b>${quand}</b> (officiel)`
-                      : `<b>${quand}</b> (${pct(d.p[2])})`;
-  });
-  strip.innerHTML = `<div class="alert">
+
+  const parts = [];
+  if (rouges.length) {
+    parts.push(`<strong class="r">${rouges.length} jour${rouges.length > 1 ? "s" : ""} Rouge</strong> :
+                ${rouges.map(nomme).join(" · ")}`);
+  }
+  if (blancs.length) {
+    parts.push(`<strong class="b">${blancs.length} jour${blancs.length > 1 ? "s" : ""} Blanc</strong> :
+                ${blancs.map(nomme).join(" · ")}`);
+  }
+  // Le prix annonce est celui de la couleur la plus chere presente, pas le Rouge par
+  // defaut : un bandeau qui ne contient que des Blanc ne doit pas afficher 0,7295 €.
+  const pire = rouges.length ? 3 : 2;
+  const prix = tariffs
+    ? ` Heures pleines à <b>${euro(tariffs.by_color[pire].hp)} €</b>/kWh.` : "";
+  const classe = rouges.length ? "alert" : "alert is-blanc";
+  strip.innerHTML = `<div class="${classe}">
       <span class="alert-mark" aria-hidden="true"></span>
-      <div><strong>${rouges.length} jour${rouges.length > 1 ? "s" : ""} Rouge</strong>
-        sur les 10 prochains jours : ${items.join(" · ")}.
-        ${tariffs ? `Heures pleines à <b>${euro(tariffs.by_color[3].hp)} €</b>/kWh.` : ""}</div>
+      <div>Sur les ${aVenir} prochains jours — ${parts.join(" · ")}.${prix}</div>
     </div>`;
 }
 

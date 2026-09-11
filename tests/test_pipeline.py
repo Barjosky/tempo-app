@@ -701,3 +701,57 @@ def test_l_amorce_s_efface_quand_la_base_mesure_seule():
     propres = ["2027-01-%02dT09:00:00+00:00" % j for j in range(1, 7)]
     assert cadence.avec_amorce(propres, horaires) == propres, (
         "l'amorce pese encore alors que la base a de quoi mesurer seule")
+
+
+def test_un_reentrainement_ne_dedouble_pas_les_predictions():
+    """La panne du 11 septembre 2026 : 21 cartes pour 10 jours.
+
+    `model_version` fait partie de la cle de la table, donc reentrainer un jour ou des
+    predictions existent deja n'ecrase rien -- ca ajoute une serie parallele. La page
+    affichait chaque date deux fois et, plus grave, l'historique comptait six paires
+    (date, echeance) en double sur seize : le taux de reussite publie portait sur des
+    lignes dedoublees.
+
+    La vue `predictions_a_jour` ne garde que la derniere serie. Le test verrouille la
+    vue, pas la discipline de filtrer dans chaque requete.
+    """
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    commun = dict(run_date="2026-09-11", target_date="2026-09-12", horizon=1,
+                  p_bleu=0.9, p_blanc=0.07, p_rouge=0.03, predicted_color=1,
+                  is_official=0)
+    db.insert_predictions(conn, [
+        dict(commun, run_datetime="2026-09-11T10:00:00+00:00", model_version="v1"),
+        dict(commun, run_datetime="2026-09-11T20:00:00+00:00", model_version="v2",
+             p_bleu=0.5, p_blanc=0.3, p_rouge=0.2, predicted_color=2),
+    ])
+    brut = conn.execute("SELECT COUNT(*) n FROM predictions").fetchone()["n"]
+    vues = conn.execute("SELECT * FROM predictions_a_jour").fetchall()
+    assert brut == 2, "les deux versions doivent rester en base"
+    assert len(vues) == 1, f"{len(vues)} lignes vues au lieu d'une seule"
+    assert vues[0]["model_version"] == "v2", "c'est la plus RECENTE qui doit sortir"
+
+    # Un backtest rejoue ne doit pas masquer la prediction reellement faite ce jour-la :
+    # ce sont deux series independantes.
+    db.insert_predictions(conn, [
+        dict(commun, run_datetime="2026-09-11T23:00:00+00:00",
+             model_version="backtest-7")])
+    familles = {r["model_version"] for r in
+                conn.execute("SELECT * FROM predictions_a_jour")}
+    assert familles == {"v2", "backtest-7"}, f"series melangees : {familles}"
+
+
+def test_la_vue_se_recree_sur_une_base_ancienne():
+    """Une base venant du cache Actions porte la vue telle qu'elle etait ce jour-la.
+    Si `init_db` ne faisait que `CREATE VIEW IF NOT EXISTS`, la correction ne
+    s'appliquerait jamais aux bases existantes -- exactement le genre de garde-fou qui
+    attend qu'on pense a lui."""
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    conn.execute("DROP VIEW predictions_a_jour")
+    conn.execute("CREATE VIEW predictions_a_jour AS SELECT * FROM predictions")
+    conn.commit()
+    db.init_db(conn)
+    sql = conn.execute("""SELECT sql FROM sqlite_master
+                          WHERE type='view' AND name='predictions_a_jour'""").fetchone()
+    assert "ROW_NUMBER" in (sql["sql"] or ""), "la vue perimee n'a pas ete recreee"

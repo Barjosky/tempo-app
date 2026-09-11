@@ -125,6 +125,32 @@ CREATE TABLE IF NOT EXISTS runs (
     trigger TEXT
 );
 
+-- Les predictions A JOUR, une seule par (jour de calcul, jour cible).
+--
+-- La table, elle, porte `model_version` dans sa cle : reentrainer le modele un jour ou
+-- des predictions existent deja n'ecrase donc pas les anciennes, il en AJOUTE. Le
+-- 11 septembre 2026, la page affichait ainsi 21 cartes pour 10 jours, chaque date deux
+-- fois -- et, plus grave, l'historique comptait six paires (date, echeance) en double
+-- sur seize : le taux de reussite publie portait sur des lignes dedoublees.
+--
+-- Filtrer a la lecture aurait demande d'y penser dans les quatre requetes, et dans
+-- celles a venir. La vue le fait une fois pour toutes : c'est elle qu'on lit, jamais la
+-- table. Elle est RECREEE a chaque init_db (drop puis create) pour qu'une base venant
+-- du cache ne conserve pas une definition perimee.
+--
+-- Live et backtest sont dedoublonnes separement : ce sont deux series independantes,
+-- et un backtest rejoue ne doit pas masquer la prediction reellement faite ce jour-la.
+DROP VIEW IF EXISTS predictions_a_jour;
+CREATE VIEW predictions_a_jour AS
+SELECT * FROM (
+    SELECT p.*, ROW_NUMBER() OVER (
+        PARTITION BY run_date, target_date, (model_version LIKE 'backtest%')
+        ORDER BY run_datetime DESC, model_version DESC) AS rang
+    FROM predictions p)
+WHERE rang = 1;
+
+CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_date, target_date);
+
 CREATE INDEX IF NOT EXISTS idx_pred_target ON predictions(target_date);
 CREATE INDEX IF NOT EXISTS idx_days_season ON days(season);
 """

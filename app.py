@@ -92,7 +92,7 @@ def index():
 def forecast():
     conn = db.connect()
     last_run = conn.execute(
-        f"SELECT MAX(run_date) FROM predictions WHERE {LIVE_VERSIONS}").fetchone()[0]
+        f"SELECT MAX(run_date) FROM predictions_a_jour WHERE {LIVE_VERSIONS}").fetchone()[0]
     items = []
     if last_run:
         # J+0 : la couleur du jour, connue et non predite. Sans elle la page
@@ -109,7 +109,7 @@ def forecast():
             })
         rows = conn.execute(
             f"""SELECT p.*, d.color AS actual, d.is_holiday
-                FROM predictions p LEFT JOIN days d ON d.date = p.target_date
+                FROM predictions_a_jour p LEFT JOIN days d ON d.date = p.target_date
                 WHERE p.run_date = ? AND {LIVE_VERSIONS} ORDER BY p.horizon""",
             (last_run,)).fetchall()
         for r in rows:
@@ -165,7 +165,7 @@ def history():
     elif source == "backtest":
         where.append("model_version LIKE 'backtest%'")
     rows = conn.execute(
-        f"""SELECT p.*, d.color AS actual FROM predictions p
+        f"""SELECT p.*, d.color AS actual FROM predictions_a_jour p
             JOIN days d ON d.date = p.target_date
             WHERE {' AND '.join(where)}{period_clause(period)}
             ORDER BY p.target_date DESC, p.horizon LIMIT ?""",
@@ -199,7 +199,7 @@ def accuracy():
     cond += period_clause(period)
     rows = conn.execute(
         f"""SELECT p.horizon, p.predicted_color, p.p_rouge, d.color AS actual
-            FROM predictions p JOIN days d ON d.date = p.target_date
+            FROM predictions_a_jour p JOIN days d ON d.date = p.target_date
             WHERE d.color IS NOT NULL AND p.is_official = 0 {cond}""", params).fetchall()
     by_h, confusion = {}, [[0] * 3 for _ in range(3)]
     for r in rows:
