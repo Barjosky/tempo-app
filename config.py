@@ -150,6 +150,16 @@ N_SEEDS = 5
 # d'alerte -- un compromis defendable si un jour on prefere alerter moins mais mieux.
 TWO_STAGE = False
 
+# Couper l'apprentissage en deux bandes d'echeance : J+1 a J+N d'un cote, le reste de
+# l'autre. A None, un seul modele apprend sur les dix echeances melangees.
+#
+# L'hypothese vient d'une mesure : a J+1, la charge residuelle rend +0,164 de log-loss
+# avec une pire saison a +0,024 (porteuse) ; sur toutes les echeances confondues elle
+# tombe a +0,055 avec une pire saison a -0,094 (instable). La prevision de consommation
+# est juste a J+1 et n'est plus que du bruit a J+10 -- le modele unique traite pourtant
+# les deux pareil.
+HORIZON_SPLIT = None
+
 # Imposer le Rouge quand le quota ne tient plus dans les jours restants.
 # C'est une consequence arithmetique, pas une prevision : voir rules.rouge_force.
 FORCE_QUOTA_ROUGE = True

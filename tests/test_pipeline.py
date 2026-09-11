@@ -264,7 +264,7 @@ def test_le_perimetre_de_notation_est_le_meme_partout():
         f"""SELECT p.target_date AS date FROM days d
             JOIN (SELECT date AS target_date FROM days) p ON p.target_date = d.date
             WHERE d.color IS NOT NULL {web.period_clause('eligibles')}""")}
-    par_python = {d.isoformat() for d, info in _STORE["store"].days.items()
+    par_python = {d.isoformat() for d, info in store().days.items()
                   if info["color"] is not None
                   and rules.rouge_possible(d, info["is_holiday"])}
     assert par_sql == par_python, (
@@ -273,7 +273,7 @@ def test_le_perimetre_de_notation_est_le_meme_partout():
 
     # Et `evaluables()` doit s'appuyer sur le meme predicat.
     metas = [{"target": d, "is_holiday": info["is_holiday"]}
-             for d, info in sorted(_STORE["store"].days.items())]
+             for d, info in sorted(store().days.items())]
     ev = backtest.evaluables(metas)
     assert {m["target"].isoformat() for m, k in zip(metas, ev) if k} >= par_python
 
@@ -365,11 +365,11 @@ def test_les_deux_pressions_de_quota_sont_comparables():
     # Et le rapport doit disparaitre hors fenetre plutot que de valoir zero : passe le
     # 31 mars aucun Rouge n'est possible, l'arbitrage n'a plus d'objet.
     i = features.FEATURE_NAMES.index("quota_arbitrage")
-    store = _STORE["store"]
+    base = store()
     for cible, dedans in ((date(2026, 1, 15), True), (date(2026, 6, 15), False)):
         run = cible - timedelta(days=3)
-        etat = store.season_state(run)
-        ligne = features.build_row(store, run, cible, etat,
+        etat = base.season_state(run)
+        ligne = features.build_row(base, run, cible, etat,
                                    np.random.default_rng(0), True)
         if ligne is None:
             continue
@@ -462,3 +462,41 @@ def test_l_heure_affichee_est_celle_du_workflow():
     assert sorted(config.SCHEDULES_UTC) == sorted(attendus), (
         f"config.SCHEDULES_UTC vaut {config.SCHEDULES_UTC} alors que le workflow "
         f"tourne a {attendus} UTC")
+
+
+def test_chaque_echeance_est_jugee_par_son_modele():
+    """Avec une coupure d'echeance, une ligne courte et une ligne longue doivent etre
+    jugees par DEUX modeles differents.
+
+    L'astuce du test : la meme ligne de features est presentee deux fois, en ne
+    changeant que l'echeance declaree dans le meta. Si l'aiguillage fonctionne, les
+    deux probabilites different -- puisque seules deux modeles distincts peuvent
+    expliquer un ecart a entree identique. Sans cette precaution, un test verifierait
+    seulement que le code ne plante pas.
+    """
+    base = store()
+    X, y, meta = features.build_dataset(
+        base, date(config.FIRST_SEASON, 9, 1), date(2024, 8, 31))
+
+    gbm = model.TempoModel(n_seeds=1, horizon_split=3).fit(X, y, meta)
+    assert gbm.clf_court is not None, "les deux bandes auraient du etre entrainees"
+
+    # Une ligne d'HIVER : sur un jour de septembre le masque contractuel ecrase les
+    # deux sorties a la meme valeur, et le test ne prouverait plus rien.
+    i = next(k for k, m in enumerate(meta)
+             if m["target"].month == 1 and m["target"].weekday() < 5)
+    ligne = X[i:i + 1]
+    base = dict(meta[i])
+    court = [dict(base, horizon=2)]
+    long_ = [dict(base, horizon=7)]
+    p_court = gbm.predict_proba(ligne, court)
+    p_long = gbm.predict_proba(ligne, long_)
+    assert not np.allclose(p_court, p_long), (
+        "les deux echeances rendent la meme probabilite : l'aiguillage ne fait rien")
+
+    # Et sans coupure, la meme entree doit donner la meme sortie aux deux echeances.
+    plat = model.TempoModel(n_seeds=1, horizon_split=None).fit(X, y, meta)
+    assert plat.clf_court is None
+    assert np.allclose(plat.predict_proba(ligne, court),
+                       plat.predict_proba(ligne, long_)), (
+        "sans coupure, l'echeance du meta ne devrait rien changer")

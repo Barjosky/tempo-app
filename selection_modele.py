@@ -64,7 +64,8 @@ NUCLEAIRE = ["nuclear_recent_mw", "nuclear_anomaly_mw", "margin_proxy_mw"]
 # Deja mesure et ecarte : retrait des features d'offre (ameliore la moyenne, degrade
 #   le plancher), ponderation vers l'hiver (degrade 2024-2025), ensemble sans
 #   diversification (strictement sans effet).
-RETENU = dict(excluded=[], force_quota=True, n_seeds=5)
+RETENU = dict(excluded=config.EXCLUDED_FEATURES, force_quota=True,
+              n_seeds=5, two_stage=False)
 
 ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 
@@ -82,13 +83,29 @@ ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 #
 # Le denominateur corrige s'applique aux DEUX candidats : c'est une correction, pas une
 # option. Ce qui est mesure ici est l'apport des deux features d'arbitrage.
-# MESURE, ECARTE. L'arbitrage fait ce pour quoi il est concu -- rappel du Blanc
-# 44 -> 46 %, et les deux directions d'erreur reculent ensemble -- mais 2023-2024
-# passe de 0,846 a 0,942, donc le plancher se degrade de 0,911 a 0,942, et le rappel
-# Rouge perd deux points. Les features restent, neutralisees par config.
+# Deja mesure et ECARTE : l'arbitrage Blanc/Rouge. Il fait ce pour quoi il est concu
+# -- rappel du Blanc 44 -> 46 %, les deux directions d'erreur reculant ensemble --
+# mais 2023-2024 passe de 0,846 a 0,942, donc le plancher se degrade de 0,911 a 0,942.
+#
+# CE QUI EST MESURE ICI : couper l'apprentissage par bande d'echeance.
+#
+# Une meme colonne n'a pas la meme valeur selon l'echeance. Mesure a J+1 seulement, la
+# charge residuelle rend +0,164 de log-loss avec une pire saison a +0,024 -- solidement
+# porteuse. Sur les dix echeances confondues elle tombe a +0,055 avec une pire saison a
+# -0,094, donc instable. La raison est evidente une fois vue : a J+1 la prevision de
+# consommation est juste, a J+10 c'est du bruit.
+#
+# Le modele unique traite pourtant les dix echeances pareil. `horizon` est bien une
+# colonne, mais un arbre doit alors redecouvrir cette interaction dans chaque branche,
+# au lieu de la recevoir d'emblee.
+#
+# Le contre-argument, qu'il faut mesurer et non supposer : deux modeles voient chacun
+# moins de lignes, et deux modeles faibles peuvent valoir moins qu'un seul entraine sur
+# tout. D'ou deux coupures testees, a J+3 et a J+5.
 CANDIDATS = [
-    ("sans arbitrage", dict(RETENU, excluded=ARBITRAGE, two_stage=False)),
-    ("arbitrage B/R", dict(RETENU, excluded=[], two_stage=False)),
+    ("echeances melangees", dict(RETENU, horizon_split=None)),
+    ("coupure a J+3", dict(RETENU, horizon_split=3)),
+    ("coupure a J+5", dict(RETENU, horizon_split=5)),
 ]
 
 
