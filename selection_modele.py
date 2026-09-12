@@ -169,6 +169,19 @@ AVANCE = ["rouge_avance", "blanc_avance"]
 # rattrapage, que rien ne nommait.
 #
 # Le contre-argument, a mesurer : trois colonnes de plus sur quatre saisons evaluables.
+#
+# MESURE, TOUT ECARTE -- et le tableau ne dit pas ce qu'il a l'air de dire.
+#   perimetre : MEME GAGNANT avec et sans J+1. La correction est juste mais sans
+#     consequence : les verdicts passes n'ont pas ete fausses par ce dixieme.
+#   colonnes  : lu vite, « + les deux » gagne (plancher 0,884 -> 0,875). Trois raisons
+#     de ne pas le croire. Chaque colonne PERD seule (0,886 et 0,916) : si l'une portait
+#     un signal, elle tiendrait seule. Sur la seule saison 2023-2024 les quatre
+#     candidats s'etalent de 0,804 a 0,916, soit 0,112 -- on pretendrait trancher un
+#     gain de 0,009 avec un instrument douze fois plus grossier. Et le rappel du Blanc
+#     recule de facon monotone, 57 -> 56 -> 55 -> 54 %, a mesure qu'on ajoute des
+#     colonnes : cette regularite-la, elle, est coherente.
+#   Les trois colonnes passent dans EXCLUDED_FEATURES. Le code reste pour que la mesure
+#   se refasse quand les saisons se seront accumulees.
 CANDIDATS = [
     ("reference", dict(RETENU, excluded=config.EXCLUDED_FEATURES + CHURN + AVANCE)),
     ("+ instabilite meteo", dict(RETENU, excluded=config.EXCLUDED_FEATURES + AVANCE)),

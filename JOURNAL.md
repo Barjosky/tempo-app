@@ -596,6 +596,70 @@ observées pour elles-mêmes, deux passages à moins de deux heures l'un de l'au
 appartenant au même rendez-vous. La page annonce ce que le système *fait*, quoi qu'on
 lui ait demandé — et le jour où les crons changent, rien n'est à mettre à jour.
 
+## Trois mesures d'un coup : le périmètre, l'instabilité météo, l'avance de quota
+
+### Le périmètre : mesuré, SANS EFFET
+
+En production, `predict_next_days` fait `predicted_color = official or …` : dès que RTE
+annonce le lendemain — vers 11 h, avant tous nos passages — la couleur officielle
+**écrase** la prédiction du modèle. Ce que le modèle dit à J+1 n'est jamais montré. Le
+backtest, lui, le notait comme les autres : un dixième de chaque score portait sur une
+question déjà résolue.
+
+Les deux planchers ont donc été calculés côte à côte, J+1 compris et J+1 retiré.
+**Même gagnant dans les deux cas.** La correction est juste mais sans conséquence : les
+verdicts passés n'ont pas été faussés par ce dixième. `evaluables(horizon_min=2)` reste
+disponible, et ce résultat évite d'y revenir.
+
+### Les deux colonnes : mesurées, ÉCARTÉES
+
+| Candidat | 2022-23 | 2023-24 | 2024-25 | 2025-26 | **PIRE** |
+|---|---|---|---|---|---|
+| référence | 0,359 | 0,868 | 0,617 | 0,884 | **0,884** |
+| + instabilité météo | 0,367 | 0,804 | 0,616 | 0,886 | **0,886** |
+| + avance quota | 0,359 | 0,916 | 0,614 | 0,871 | **0,916** |
+| + les deux | 0,367 | 0,862 | 0,611 | 0,875 | **0,875** |
+
+Lu vite, « + les deux » gagne : plancher 0,884 → 0,875. **Trois raisons de ne pas le
+croire.**
+
+**1. Chaque colonne perd seule.** L'instabilité météo dégrade le plancher (0,886), et
+l'avance de quota le dégrade lourdement (0,916). Si chacune portait un signal, au moins
+une devrait tenir seule. Leur réunion qui gagne n'est pas un mécanisme, c'est une
+combinaison qui tombe bien sur ces quatre saisons.
+
+**2. L'instrument est plus grossier que l'effet.** Sur la seule saison 2023-2024, les
+quatre candidats s'étalent de 0,804 à 0,916 — **0,112 d'écart**. On prétendrait trancher
+un gain de **0,009** avec une mesure dont la dispersion est douze fois plus grande.
+
+**3. Le Blanc recule, et de façon monotone.** C'est la faiblesse numéro un du projet :
+
+| | rappel B | préc. B | B vu Bleu | B vu Rouge |
+|---|---|---|---|---|
+| référence | **57 %** | 58 % | **25 %** | 18 % |
+| + instabilité météo | 56 % | 57 % | 25 % | 18 % |
+| + avance quota | 55 % | 58 % | 27 % | 18 % |
+| + les deux | 54 % | 58 % | 28 % | 18 % |
+
+57 → 56 → 55 → 54 à mesure qu'on ajoute des colonnes, et « Blanc vu Bleu » qui monte de
+25 à 28 %. Cette régularité-là, contrairement au gain de plancher, est cohérente d'un
+candidat à l'autre : les colonnes diluent la décision sur le Blanc.
+
+Les trois colonnes passent donc dans `EXCLUDED_FEATURES`. Le code reste, documenté, pour
+que la mesure se refasse si les saisons s'accumulent — quatre, c'est trop peu pour
+détecter 0,009.
+
+### Le garde-fou qui manquait, trouvé en écartant
+
+Neutraliser une colonne **ne périmait pas le modèle en cache**. `structure()` ne regarde
+que les *noms* des attributs, et le contrôle de features que la liste des colonnes
+*produites* : ni l'un ni l'autre ne bouge quand `EXCLUDED_FEATURES` change. Un modèle
+entraîné avec `forecast_churn` actif aurait continué à s'en servir après son retrait, en
+silence, et il aurait fallu **penser** à relancer l'entraînement.
+
+Quatrième répétition de la même leçon. `load()` compare désormais les features
+neutralisées du modèle à celles de la configuration, et un test le verrouille.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

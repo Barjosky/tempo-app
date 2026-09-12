@@ -128,7 +128,13 @@ WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT = 3.5, 12.0, 25.0
 # dit pas ce que vaut un modele entraine sans elle. Dans le premier cas les autres
 # colonnes gardent les compensations apprises grace a celle qu'on detruit ; dans le
 # second, le modele se reorganise. Les deux mesures repondent a deux questions.
-EXCLUDED_FEATURES = ["blanc_pressure_hiver", "quota_arbitrage"]
+EXCLUDED_FEATURES = ["blanc_pressure_hiver", "quota_arbitrage",
+                     # Mesurees puis ecartees : chacune DEGRADE le plancher seule
+                     # (0,884 -> 0,886 et 0,916), et leur reunion ne le releve qu'a
+                     # 0,875 -- un gain de 0,009 qu'aucun mecanisme n'explique, avec
+                     # un instrument dont la dispersion atteint 0,112 sur une seule
+                     # saison. Voir JOURNAL.md.
+                     "forecast_churn", "rouge_avance", "blanc_avance"]
 
 # Poids des jours ou le Rouge est possible pendant l'entrainement. A 1.0 : desactive.
 # L'idee -- concentrer l'apprentissage sur le regime hivernal plutot que sur des

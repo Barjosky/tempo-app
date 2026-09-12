@@ -90,6 +90,18 @@ def load(conn=None):
             f"{len(features.FEATURE_NAMES)}"
             + (f" (nouvelles : {', '.join(sorted(manquantes))})" if manquantes else "")
             + " -- relancer `python collector.py --train`")
+    # Enfin les features NEUTRALISEES. Le controle precedent ne voit que la liste des
+    # colonnes produites, et `structure()` que les NOMS des attributs : neutraliser une
+    # colonne ne change ni l'un ni l'autre. Un modele entraine avec `forecast_churn`
+    # actif continuerait donc a s'en servir apres qu'on l'a ecartee, en silence, et il
+    # aurait fallu penser a relancer l'entrainement a la main. C'est exactement le
+    # garde-fou qui repose sur la memoire, et il a deja laisse passer trois pannes.
+    neutralisees = getattr(bundle["model"], "excluded", None)
+    if sorted(neutralisees or []) != sorted(config.EXCLUDED_FEATURES):
+        raise ModeleObsolete(
+            f"modele entraine en neutralisant {sorted(neutralisees or [])}, la "
+            f"configuration en neutralise {sorted(config.EXCLUDED_FEATURES)}"
+            " -- relancer `python collector.py --train`")
     return bundle["model"], bundle["version"]
 
 

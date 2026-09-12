@@ -837,3 +837,34 @@ def test_l_avance_sur_le_quota_ignore_les_saisons_posterieures():
     debut = calendrier.season_start(saisons[0])
     v = s.avance_quota(debut + timedelta(days=120), config.ROUGE, 5)
     assert v != v, f"une avance a ete calculee sans saison de reference : {v}"
+
+
+def test_neutraliser_une_feature_perime_le_modele_en_cache():
+    """Quatrieme repetition de la meme lecon.
+
+    `structure()` ne regarde que les NOMS des attributs et le controle de features que
+    la liste des colonnes PRODUITES : neutraliser une colonne ne change ni l'un ni
+    l'autre. Un modele entraine avec `forecast_churn` actif aurait donc continue a s'en
+    servir apres qu'on l'a ecartee, et il aurait fallu penser a relancer
+    l'entrainement. Le controle se declenche desormais tout seul.
+    """
+    import joblib
+    from src import predict
+    gbm = model.TempoModel(excluded=["blanc_pressure_hiver"])
+    with tempfile.TemporaryDirectory() as rep:
+        chemin = Path(rep) / "m.joblib"
+        joblib.dump({"format": predict.MODEL_FORMAT, "structure": predict.structure(gbm),
+                     "features": features.FEATURE_NAMES, "model": gbm,
+                     "version": "essai"}, chemin)
+        original = predict.MODEL_PATH
+        predict.MODEL_PATH = chemin
+        try:
+            erreur = None
+            try:
+                predict.load()
+            except predict.ModeleObsolete as e:
+                erreur = str(e)
+        finally:
+            predict.MODEL_PATH = original
+    assert erreur and "neutralis" in erreur, (
+        "un modele entraine avec d'autres features neutralisees a ete accepte")
