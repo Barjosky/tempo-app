@@ -39,6 +39,8 @@ def season_summary(conn, today=None):
 
 
 ROUGE_MONTHS_SQL = ", ".join(str(m) for m in sorted(rules.ROUGE_MONTHS))
+# En deca, une precision affichee serait une anecdote deguisee en mesure.
+MIN_ANNONCES = 20
 
 
 def period_clause(period):
@@ -73,6 +75,79 @@ def dernier_passage(conn):
     return row["d"] if row else None
 
 
+def fiabilite_par_horizon(conn):
+    """Ce que vaut une prediction A SON ECHEANCE, sur le perimetre honnete.
+
+    La page vend des couleurs a dix jours, et la mesure de ce qu'elles valent vivait
+    dans l'AUTRE onglet, derriere deux filtres a regler. Un « Rouge 34 % » a J+7
+    n'apprend rien tant qu'on ignore combien d'alertes de cette echeance se
+    confirment. On la sert donc avec la prevision elle-meme.
+
+    Perimetre eligible (lun-ven, nov-mars, hors feries) et predictions non
+    officielles : le denominateur ou le modele a reellement un choix a faire. Le
+    mesurer ailleurs le flatterait de vingt points sans rien dire de plus.
+    """
+    rows = conn.execute(
+        f"""SELECT p.horizon, p.predicted_color, d.color AS actual
+            FROM predictions_a_jour p JOIN days d ON d.date = p.target_date
+            WHERE d.color IS NOT NULL AND p.is_official = 0
+            {period_clause("eligibles")}""").fetchall()
+    par_h = {}
+    for r in rows:
+        v = par_h.setdefault(r["horizon"], {
+            "n": 0, "ok": 0,
+            "annonces": {1: 0, 2: 0, 3: 0},   # combien de fois cette couleur a ete dite
+            "justes": {1: 0, 2: 0, 3: 0},     # ... et combien de fois elle est tombee
+            "reels": {1: 0, 2: 0, 3: 0},      # combien de fois elle est vraiment tombee
+        })
+        v["n"] += 1
+        v["ok"] += r["predicted_color"] == r["actual"]
+        v["annonces"][r["predicted_color"]] += 1
+        v["reels"][r["actual"]] += 1
+        if r["predicted_color"] == r["actual"]:
+            v["justes"][r["actual"]] += 1
+    # Precision ET rappel, jamais l'un sans l'autre : annoncer Rouge tous les jours
+    # rappelle 100 % des Rouges. Le lecteur a besoin des deux risques, celui de
+    # subir un jour cher et celui de s'organiser pour rien.
+    #
+    # MIN_ANNONCES vaut pour CHAQUE couleur separement. Un horizon peut totaliser
+    # quatre cents predictions et n'avoir annonce Blanc que quatre fois : « 3 sur 4 »
+    # serait alors une anecdote presentee comme une mesure. Le seuil global ne protege
+    # pas de ca -- c'est le denominateur de la couleur qui compte, pas celui du lot.
+    def taux(num, den):
+        return num / den if den >= MIN_ANNONCES else None
+
+    return {str(h): {
+        "n": v["n"],
+        "accuracy": v["ok"] / v["n"],
+        "precision": {c: taux(v["justes"][c], v["annonces"][c]) for c in (1, 2, 3)},
+        "rappel": {c: taux(v["justes"][c], v["reels"][c]) for c in (1, 2, 3)},
+        "annonces": v["annonces"],
+    } for h, v in sorted(par_h.items()) if v["n"] >= 30}
+
+
+def changements(conn, run_date):
+    """Ce qui a bouge depuis le calcul precedent, par date cible.
+
+    La page montrait un etat, jamais un mouvement -- alors que « jeudi est passe de
+    Blanc a Rouge » est ce qui fait agir, et que c'est deja en base : chaque passage
+    y laisse ses predictions.
+
+    La comparaison porte sur le dernier run_date ANTERIEUR, donc la veille, et non
+    sur le passage precedent : trois passages tombent dans la meme journee et l'ecart
+    de quelques heures entre deux d'entre eux ne raconte rien.
+    """
+    veille = conn.execute(
+        f"""SELECT MAX(run_date) FROM predictions_a_jour
+            WHERE run_date < ? AND {LIVE_VERSIONS}""", (run_date,)).fetchone()[0]
+    if not veille:
+        return {}, None
+    rows = conn.execute(
+        f"""SELECT target_date, predicted_color FROM predictions_a_jour
+            WHERE run_date = ? AND {LIVE_VERSIONS}""", (veille,)).fetchall()
+    return {r["target_date"]: r["predicted_color"] for r in rows}, veille
+
+
 def tariff_payload():
     """Grille tarifaire servie a la page, pour afficher le prix de chaque journee."""
     return {
@@ -94,6 +169,7 @@ def forecast():
     last_run = conn.execute(
         f"SELECT MAX(run_date) FROM predictions_a_jour WHERE {LIVE_VERSIONS}").fetchone()[0]
     items = []
+    avant, veille = changements(conn, last_run) if last_run else ({}, None)
     if last_run:
         # J+0 : la couleur du jour, connue et non predite. Sans elle la page
         # commence a demain, alors que c'est aujourd'hui qu'on consomme.
@@ -114,7 +190,7 @@ def forecast():
             (last_run,)).fetchall()
         for r in rows:
             official = r["actual"] is not None
-            items.append({
+            it = {
                 "date": r["target_date"], "horizon": r["horizon"],
                 "weekday": date.fromisoformat(r["target_date"]).weekday(),
                 "color": r["actual"] if official else r["predicted_color"],
@@ -122,7 +198,14 @@ def forecast():
                 "p": [r["p_bleu"], r["p_blanc"], r["p_rouge"]],
                 "official": official,
                 "confidence": max(r["p_bleu"], r["p_blanc"], r["p_rouge"]),
-            })
+            }
+            # Un jour devenu officiel n'a pas « change d'avis » : RTE a tranche. Le
+            # signaler comme un revirement du modele serait un contresens.
+            precedent = avant.get(r["target_date"])
+            if not official and precedent and precedent != r["predicted_color"]:
+                it["change"] = {"from": precedent, "from_name": COLOR_NAMES[precedent],
+                                "since": veille}
+            items.append(it)
     # 'forecast' d'abord (les jours a venir), puis l'observe pour J+0.
     weather = {}
     for source in ("era5", "forecast"):
@@ -140,6 +223,7 @@ def forecast():
     return jsonify({"run_date": last_run, "days": items,
                     "season": season_summary(conn), "tariffs": tariff_payload(),
                     "schedules_utc": config.SCHEDULES_UTC,
+                    "fiabilite": fiabilite_par_horizon(conn),
                     "cadence": cadence.observee(
                         cadence.avec_amorce(db.passages_reguliers(conn))),
                     "derniere_maj": dernier_passage(conn)})
