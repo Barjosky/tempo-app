@@ -62,12 +62,6 @@ h1 span { color: var(--fg-dim); font-weight: 500; margin: 0 2px; }
   display: block; margin-top: 2px; color: var(--fg-dim); font-size: 11px;
   font-family: var(--mono);
 }
-.next-run[data-state="running"] strong { color: var(--amber); }
-.next-run[data-state="running"] .label::after {
-  content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px;
-  border-radius: 50%; background: var(--amber); animation: pulse 1.6s ease-in-out infinite;
-}
-@keyframes pulse { 50% { opacity: .25; } }
 @media (max-width: 640px) { .run-meta { gap: 18px; } }
 .label {
   display: block; font-size: 10px; letter-spacing: .16em; text-transform: uppercase;

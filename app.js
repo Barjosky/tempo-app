@@ -196,7 +196,8 @@ async function loadForecast() {
   // `derniere_maj` est l'instant ou la collecte a tourne, donc ou ces predictions ont
   // ete calculees -- pas celui ou le fichier a ete ecrit.
   majAffichee(data.derniere_maj);
-  demarrerCompteARebours(data.cadence, data.derniere_maj);
+  // Le rechargement automatique reste : il ne promet rien, il constate.
+  guetterNouvellesDonnees();
   tariffs = data.tariffs || null;
   renderTariffGrid();
 
@@ -257,76 +258,16 @@ async function loadForecast() {
   }).join("");
 }
 
-/* ---------- compte a rebours ----------
-   La page ne change que deux fois par jour. Sans cette indication, une page ouverte a
-   9 h et une page ouverte a 18 h se ressemblent, et rien ne dit laquelle est fraiche.
+/* ---------- fraicheur ----------
+   Le compte a rebours vers le prochain calcul a ete retire : il promettait une heure
+   que GitHub Actions ne tient pas. Mesure faite sur les passages reels, le cron part
+   avec deux a quatre heures de retard, et de facon variable d'un creneau a l'autre --
+   annoncer une heure precise revenait a annoncer celle de quelqu'un d'autre.
 
-   CE COMPTEUR A DEJA MENTI. Il visait l'horaire des crons GitHub (10h30 et 17h UTC).
-   Mesure faite sur les passages reels : ils partent avec deux a quatre heures de
-   retard, de facon reproductible. Le compteur tombait donc a zero, affichait « en
-   cours » un quart d'heure, puis repartait vers le passage suivant -- alors que rien
-   n'avait bouge et ne bougerait pas avant des heures.
-
-   Il vise desormais l'horaire MESURE (`data.cadence`, cron + mediane des retards
-   observes), et il ne s'affiche pas tant que la mesure n'est pas assez solide. Deux
-   regles en decoulent :
-     - aucun compte a rebours sans mesure fiable ; on affiche alors « derniere mise a
-       jour il y a X », qui est vrai par construction ;
-     - passe l'heure attendue, on n'enchaine PAS sur le passage suivant : on annonce
-       une mise a jour imminente et on guette les donnees. */
-let tickTimer = null;
-
-/* Le prochain passage FIABLE, en heure UTC mesuree. Les passages dont la cadence
-   n'est pas encore etablie sont ignores plutot que devines. */
-function prochainPassage(cadence) {
-  const now = new Date();
-  const candidats = (cadence.passages || [])
-    .filter((p) => p.fiable && p.attendu_utc)
-    .map((p) => {
-      const [h, m] = p.attendu_utc.split(":").map(Number);
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
-                                 now.getUTCDate(), h, m));
-      if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
-      return d;
-    });
-  return candidats.length ? new Date(Math.min(...candidats)) : null;
-}
-
-/* L'heure attendue vient-elle de passer sans que rien n'arrive ? On regarde la plus
-   recente des heures attendues, et on la considere « en cours » pendant une fenetre
-   proportionnee a la dispersion observee -- pas une constante inventee. */
-function passageEnCours(cadence) {
-  const now = new Date();
-  return (cadence.passages || []).some((p) => {
-    if (!p.fiable || !p.attendu_utc) return false;
-    const [h, m] = p.attendu_utc.split(":").map(Number);
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
-                                now.getUTCDate(), h, m));
-    if (d > now) d.setUTCDate(d.getUTCDate() - 1);
-    // Marge : la dispersion constatee, avec un plancher de 20 min pour le temps
-    // que met le job lui-meme.
-    const marge = Math.max(20, p.dispersion_min || 0) * 60000;
-    return now - d <= marge;
-  });
-}
-
-function dureeCourte(ms) {
-  const min = Math.max(0, Math.round(ms / 60000));
-  const h = Math.floor(min / 60);
-  return h ? `${h} h ${String(min % 60).padStart(2, "0")}` : `${min} min`;
-}
-
-/* L'heure de la derniere mise a jour, dans le fuseau du lecteur. Le serveur horodate en
-   UTC ; l'afficher tel quel demanderait au lecteur francais de retrancher deux heures
-   de tete, et une page qui se veut lisible d'un coup d'oeil ne fait pas faire ca. */
-function majAffichee(iso) {
-  const el = document.getElementById("run-at");
-  if (!el) return;
-  const t = horodatage(iso);
-  el.textContent = t
-    ? "à " + t.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-    : "";
-}
+   Ne reste que ce qui est VRAI par construction : quand le dernier calcul a eu lieu.
+   Le lecteur en tire lui-meme ce qu'il veut savoir -- la page est-elle fraiche -- sans
+   qu'on lui promette rien sur la suite. La cadence continue d'etre mesuree et publiee
+   (`data.cadence`), elle ne sert simplement plus a promettre. */
 
 /* Les horodatages du serveur sont en UTC. Certains portent leur decalage, d'autres non
    -- et une chaine sans fuseau est interpretee comme une heure LOCALE par le
@@ -337,53 +278,16 @@ function horodatage(iso) {
   return isNaN(t) ? null : t;
 }
 
-/* « il y a 3 h 20 » — le repli qui reste vrai meme sans cadence connue. */
-function depuis(iso) {
+/* L'heure du dernier calcul, dans le fuseau du lecteur. La date seule ne dit pas la
+   fraicheur : le 12 septembre a 8 h et le 12 septembre a 22 h sont deux pages tres
+   differentes. */
+function majAffichee(iso) {
+  const el = document.getElementById("run-at");
+  if (!el) return;
   const t = horodatage(iso);
-  return t ? dureeCourte(new Date() - t) : null;
-}
-
-function demarrerCompteARebours(cadence, derniereMaj) {
-  const box = document.getElementById("next-run");
-  const val = document.getElementById("countdown");
-  const at = document.getElementById("next-at");
-  const label = box ? box.querySelector(".label") : null;
-  if (!box) return;
-  box.hidden = false;
-
-  const tick = () => {
-    const age = depuis(derniereMaj);
-    // Sans cadence mesurable, on ne promet rien : on dit ce qu'on sait.
-    if (!cadence || !cadence.fiable) {
-      box.dataset.state = "";
-      if (label) label.textContent = "dernière mise à jour";
-      val.textContent = age ? "il y a " + age : "—";
-      at.textContent = "prochaine dans la journée, heure encore mal connue";
-      return;
-    }
-    if (passageEnCours(cadence)) {
-      box.dataset.state = "running";
-      if (label) label.textContent = "mise à jour";
-      val.textContent = "imminente";
-      at.textContent = age ? "la dernière date d'il y a " + age : "les données arrivent";
-      guetterNouvellesDonnees();
-      return;
-    }
-    const next = prochainPassage(cadence);
-    if (!next) return;
-    box.dataset.state = "";
-    if (label) label.textContent = "prochain calcul";
-    // L'HEURE en gros, la duree en petit -- et pas l'inverse. « 17 h 33 » pour dire
-    // « dans dix-sept heures » se lit comme « a 17 h 33 » : c'est exactement ainsi que
-    // le compteur a ete compris. La question posee est « quand ? », la reponse est donc
-    // une heure. Le « dans » devant la duree leve le reste du doute.
-    val.textContent = next.toLocaleTimeString("fr-FR",
-      { hour: "2-digit", minute: "2-digit" });
-    at.textContent = "dans " + dureeCourte(next - new Date());
-  };
-  tick();
-  clearInterval(tickTimer);
-  tickTimer = setInterval(tick, 30000);
+  el.textContent = t
+    ? "à " + t.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+    : "";
 }
 
 /* On ne recharge pas « a l'heure dite » : le job peut avoir pris du retard, et on
