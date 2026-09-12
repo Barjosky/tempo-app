@@ -1,1 +1,1 @@
-[{"actual":1,"actual_name":"Bleu","backtest":false,"correct":true,"horizon":4,"official":false,"p":[1.0,0.0,0.0],"predicted":1,"predicted_name":"Bleu","target_date":"2026-09-12"}]
+[{"actual":1,"actual_name":"Bleu","backtest":false,"correct":true,"horizon":4,"official":false,"p":[1.0,0.0,0.0],"predicted":1,"predicted_name":"Bleu","target_date":"2026-09-13"},{"actual":1,"actual_name":"Bleu","backtest":false,"correct":true,"horizon":4,"official":false,"p":[1.0,0.0,0.0],"predicted":1,"predicted_name":"Bleu","target_date":"2026-09-12"}]
