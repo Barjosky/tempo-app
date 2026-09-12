@@ -66,6 +66,17 @@ FEATURE_NAMES = [
     # dix jours avant. Vides (NaN) si le projet tourne sans cle RTE.
     "offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanned_mw",
     "offline_total_mw", "margin_rte_mw",
+    # Combien la prevision de ce jour-la a BOUGE d'un passage a l'autre. Le groupe
+    # meteo mesure +0,060 en moyenne mais -0,076 sur la pire saison : porteur et
+    # instable. Une temperature a J+10 ne vaut pas celle de J+2, et le modele n'avait
+    # que `horizon` pour le deviner -- une moyenne, jamais le cas particulier.
+    "forecast_churn",
+    # Avance ou retard sur la trajectoire habituelle de consommation du quota. Les
+    # quotas sont le seul groupe solidement porteur (+0,120, pire saison +0,016) ;
+    # `rouge_pressure` dit ce qu'il RESTE par jour restant, jamais si EDF est en avance
+    # ou en retard sur son rythme. En 2025-2026, treize Rouge sur vingt-deux sont tombes
+    # en mars : du rattrapage, que rien ne nommait.
+    "rouge_avance", "blanc_avance",
 ]
 
 
@@ -242,6 +253,9 @@ class FeatureStore:
         self._nuclear_cache = {}
         self._nuclear_normal_cache = {}
         self._climat_residual_cache = {}
+        self._churn_cache = {}
+        self._cumul_cache = {}
+        self._avance_cache = {}
         self.conso = {}
         cols = {c[1] for c in conn.execute("PRAGMA table_info(conso)")}
         for r in conn.execute("SELECT * FROM conso"):
@@ -342,6 +356,75 @@ class FeatureStore:
             "tmax": obs["tmax"] + noise if obs["tmax"] is not None else None,
             "hdd": max(0.0, config.HDD_BASE - tmean),
         }, -lead)  # lead negatif = pseudo-prevision
+
+    def forecast_churn(self, target, horizon):
+        """Dispersion des previsions successives pour ce jour-la, connue le jour R.
+
+        La prevision faite `lead` jours avant la cible a ete emise le jour
+        `cible - lead` : toutes celles d'echeance SUPERIEURE ou egale a l'horizon sont
+        donc deja publiees au moment ou l'on predit. Les comparer ne fait entrer aucune
+        information future -- c'est la meme exigence que le `lead` de la table weather.
+
+        Rendue a NaN avant 2022, ou l'archive de previsions n'existe pas : la meteo y
+        est reconstituee en « observe + bruit », et mesurer la dispersion de ce bruit
+        reviendrait a apprendre au modele a reconnaitre les vieilles saisons.
+        """
+        cle = (target, horizon)
+        if cle in self._churn_cache:
+            return self._churn_cache[cle]
+        vals = []
+        for lead in range(horizon, min(horizon + 3, config.MAX_ARCHIVED_LEAD + 1)):
+            w = self.weather.get((target, lead))
+            if w and w["tmean"] is not None:
+                vals.append(w["tmean"])
+        out = float(np.std(vals)) if len(vals) >= 2 else float("nan")
+        self._churn_cache[cle] = out
+        return out
+
+    def _cumul_quota(self, couleur):
+        """Par saison, le nombre de jours de cette couleur consommes au jour J de saison.
+
+        Sert de courbe de reference : « a ce stade de l'hiver, EDF en avait d'ordinaire
+        brule tant ». Construit une fois, sur toutes les saisons de la base.
+        """
+        if couleur in self._cumul_cache:
+            return self._cumul_cache[couleur]
+        par_saison = {}
+        for d, info in self.days.items():
+            saison = info["season"]
+            debut = calendrier.season_start(saison)
+            jour = (d - debut).days
+            if jour < 0:
+                continue
+            serie = par_saison.setdefault(saison, {})
+            serie[jour] = serie.get(jour, 0) + (1 if info["color"] == couleur else 0)
+        # Cumul : on veut « combien depuis le 1er septembre », pas « combien ce jour-la ».
+        cumules = {}
+        for saison, serie in par_saison.items():
+            total, courbe = 0, {}
+            for jour in range(max(serie) + 1):
+                total += serie.get(jour, 0)
+                courbe[jour] = total
+            cumules[saison] = courbe
+        self._cumul_cache[couleur] = cumules
+        return cumules
+
+    def avance_quota(self, run_date, couleur, consommes):
+        """Ecart au rythme habituel : positif = EDF a deja brule plus que d'ordinaire.
+
+        Seules les saisons ANTERIEURES servent de reference -- se comparer a des hivers
+        qu'on n'a pas encore vus reviendrait a savoir d'avance quel hiver on va avoir.
+        """
+        saison = calendrier.season_of(run_date)
+        jour = (run_date - calendrier.season_start(saison)).days
+        cle = (saison, jour, couleur)
+        if cle not in self._avance_cache:
+            courbes = self._cumul_quota(couleur)
+            refs = [c[jour] for s, c in courbes.items() if s < saison and jour in c]
+            self._avance_cache[cle] = (float(np.median(refs)) if len(refs) >= 2
+                                       else float("nan"))
+        normale = self._avance_cache[cle]
+        return consommes - normale if normale == normale else float("nan")
 
     def season_state(self, run_date):
         """Quotas consommes a la date R (couleurs connues jusqu'a R inclus)."""
@@ -865,6 +948,11 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
                   if offline_nuc == offline_nuc and residual_mw == residual_mw
                   else float("nan"))
 
+    # Instabilite de la prevision, et avance/retard sur le rythme habituel des quotas.
+    churn = store.forecast_churn(target, horizon)
+    rouge_avance = store.avance_quota(run_date, config.ROUGE, state["rouge_used"])
+    blanc_avance = store.avance_quota(run_date, config.BLANC, state["blanc_used"])
+
     xmas = int((target.month == 12 and target.day >= 20) or (target.month == 1 and target.day <= 3))
     holiday_adj = int(calendrier.is_holiday(target - timedelta(days=1))
                       or calendrier.is_holiday(target + timedelta(days=1)))
@@ -905,6 +993,7 @@ def build_row(store, run_date, target, state=None, rng=None, use_renewables=True
         rouge_slack if rouge_slack is not None else float("nan"), rouge_forced,
         blanc_pressure_hiver, quota_arbitrage,
         offline_nuc, offline_nuc_anomaly, offline_unplanned, offline_tot, margin_rte,
+        churn, rouge_avance, blanc_avance,
     ]
     return np.array(row, dtype=float)
 
