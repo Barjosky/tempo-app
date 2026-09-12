@@ -17,7 +17,7 @@ import config
 import fixtures
 import ingest_rte
 from src import cadence, db, features, model
-from src.sources import rte
+from src.sources import calendrier, rte
 
 _STORE = {}
 
@@ -483,24 +483,32 @@ def test_chaque_echeance_est_jugee_par_son_modele():
     gbm = model.TempoModel(n_seeds=1, horizon_split=3).fit(X, y, meta)
     assert gbm.clf_court is not None, "les deux bandes auraient du etre entrainees"
 
-    # Une ligne d'HIVER : sur un jour de septembre le masque contractuel ecrase les
+    # Des lignes d'HIVER : sur un jour de septembre le masque contractuel ecrase les
     # deux sorties a la meme valeur, et le test ne prouverait plus rien.
-    i = next(k for k, m in enumerate(meta)
-             if m["target"].month == 1 and m["target"].weekday() < 5)
-    ligne = X[i:i + 1]
-    base = dict(meta[i])
-    court = [dict(base, horizon=2)]
-    long_ = [dict(base, horizon=7)]
-    p_court = gbm.predict_proba(ligne, court)
-    p_long = gbm.predict_proba(ligne, long_)
-    assert not np.allclose(p_court, p_long), (
-        "les deux echeances rendent la meme probabilite : l'aiguillage ne fait rien")
+    #
+    # Il en faut PLUSIEURS, et hors jours feries. La version precedente n'en jugeait
+    # qu'une seule et tombait sur le 1er janvier -- ferie, donc Rouge contractuellement
+    # impossible, donc les deux bandes forcees a la meme sortie. Elle annoncait alors
+    # « l'aiguillage ne fait rien » alors qu'il marchait : mesure sur quarante lignes
+    # d'hiver, l'ecart median entre les deux bandes est de 0,21.
+    lignes = [k for k, m in enumerate(meta)
+              if m["target"].month == 1 and m["target"].weekday() < 5
+              and not m["is_holiday"]][:40]
+    assert len(lignes) >= 10, "pas assez de jours d'hiver ouvres dans la base d'essai"
+    ecarts = [float(np.abs(gbm.predict_proba(X[k:k + 1], [dict(meta[k], horizon=2)])
+                           - gbm.predict_proba(X[k:k + 1], [dict(meta[k], horizon=7)])).max())
+              for k in lignes]
+    differents = sum(1 for e in ecarts if e > 1e-6)
+    assert differents >= len(lignes) // 2, (
+        f"seulement {differents}/{len(lignes)} lignes distinguent les deux echeances : "
+        "l'aiguillage ne fait rien")
 
     # Et sans coupure, la meme entree doit donner la meme sortie aux deux echeances.
     plat = model.TempoModel(n_seeds=1, horizon_split=None).fit(X, y, meta)
     assert plat.clf_court is None
-    assert np.allclose(plat.predict_proba(ligne, court),
-                       plat.predict_proba(ligne, long_)), (
+    k = lignes[0]
+    assert np.allclose(plat.predict_proba(X[k:k + 1], [dict(meta[k], horizon=2)]),
+                       plat.predict_proba(X[k:k + 1], [dict(meta[k], horizon=7)])), (
         "sans coupure, l'echeance du meta ne devrait rien changer")
 
 
@@ -779,3 +787,84 @@ def test_les_horaires_demandes_restent_documentes():
     assert "06:30" in config.SCHEDULES_UTC, (
         "le passage tot, ajoute pour viser midi, a disparu de la configuration")
     assert len(config.SCHEDULES_UTC) == 3
+
+
+def test_j1_se_retire_du_perimetre_de_notation():
+    """J+1 n'est pas une prediction : `predict_next_days` fait
+    `predicted_color = official or ...`, donc la couleur publiee par RTE l'ecrase.
+    Le noter revient a se faire noter sur une question deja resolue."""
+    from src import backtest
+    metas = [{"target": date(2026, 1, 6), "is_holiday": False, "horizon": h}
+             for h in range(1, 11)]
+    tout = backtest.evaluables(metas)
+    sans = backtest.evaluables(metas, horizon_min=2)
+    assert tout.sum() == 10, "les dix echeances d'un mardi de janvier sont eligibles"
+    assert sans.sum() == 9 and not sans[0], "J+1 aurait du sortir du perimetre"
+
+
+def test_l_instabilite_de_la_prevision_ne_lit_que_le_passe():
+    """La prevision d'echeance L pour la cible T a ete emise le jour T-L. Seules celles
+    d'echeance SUPERIEURE ou egale a l'horizon sont deja publiees le jour ou l'on
+    predit -- lire les autres ferait entrer du futur dans le backtest."""
+    s = store()
+    cible = date(2025, 1, 15)
+    connues = {lead for (d, lead) in s.weather if d == cible}
+    for horizon in (2, 4):
+        # On neutralise tout ce qui est plus recent que l'horizon et on verifie que la
+        # mesure ne bouge pas : si elle bougeait, c'est qu'elle le lisait.
+        avant = s.forecast_churn(cible, horizon)
+        s._churn_cache.clear()
+        sauvegarde = {}
+        for lead in connues:
+            if 0 < lead < horizon:
+                sauvegarde[lead] = s.weather.pop((cible, lead))
+        apres = s.forecast_churn(cible, horizon)
+        s.weather.update({(cible, l): v for l, v in sauvegarde.items()})
+        s._churn_cache.clear()
+        assert (avant != avant and apres != apres) or avant == apres, (
+            f"a J+{horizon}, la mesure change quand on retire les previsions plus "
+            f"recentes : {avant} puis {apres} — elle lisait le futur")
+
+
+def test_l_avance_sur_le_quota_ignore_les_saisons_posterieures():
+    """Se comparer au rythme d'hivers qu'on n'a pas encore vus reviendrait a savoir
+    d'avance quel hiver on va avoir."""
+    s = store()
+    saisons = sorted({i["season"] for i in s.days.values()})
+    assert len(saisons) >= 3, "base d'essai trop courte pour ce test"
+    # La premiere saison n'a aucune reference anterieure : la mesure doit etre absente,
+    # pas inventee.
+    debut = calendrier.season_start(saisons[0])
+    v = s.avance_quota(debut + timedelta(days=120), config.ROUGE, 5)
+    assert v != v, f"une avance a ete calculee sans saison de reference : {v}"
+
+
+def test_neutraliser_une_feature_perime_le_modele_en_cache():
+    """Quatrieme repetition de la meme lecon.
+
+    `structure()` ne regarde que les NOMS des attributs et le controle de features que
+    la liste des colonnes PRODUITES : neutraliser une colonne ne change ni l'un ni
+    l'autre. Un modele entraine avec `forecast_churn` actif aurait donc continue a s'en
+    servir apres qu'on l'a ecartee, et il aurait fallu penser a relancer
+    l'entrainement. Le controle se declenche desormais tout seul.
+    """
+    import joblib
+    from src import predict
+    gbm = model.TempoModel(excluded=["blanc_pressure_hiver"])
+    with tempfile.TemporaryDirectory() as rep:
+        chemin = Path(rep) / "m.joblib"
+        joblib.dump({"format": predict.MODEL_FORMAT, "structure": predict.structure(gbm),
+                     "features": features.FEATURE_NAMES, "model": gbm,
+                     "version": "essai"}, chemin)
+        original = predict.MODEL_PATH
+        predict.MODEL_PATH = chemin
+        try:
+            erreur = None
+            try:
+                predict.load()
+            except predict.ModeleObsolete as e:
+                erreur = str(e)
+        finally:
+            predict.MODEL_PATH = original
+    assert erreur and "neutralis" in erreur, (
+        "un modele entraine avec d'autres features neutralisees a ete accepte")

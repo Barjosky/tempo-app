@@ -16,7 +16,7 @@ from src.sources import calendrier
 HONEST_SEASONS = ["2022-2023", "2023-2024", "2024-2025", "2025-2026"]
 
 
-def evaluables(meta):
+def evaluables(meta, horizon_min=1):
     """Lignes retenues pour NOTER le modele : les jours ou un Rouge est possible.
 
     Le reste de l'annee, la reponse est Bleu d'avance -- d'avril a octobre, les
@@ -26,8 +26,21 @@ def evaluables(meta):
 
     L'ENTRAINEMENT, lui, continue de voir toute l'annee : ces jours-la portent l'etat
     des quotas et la dynamique de la saison, dont le modele a besoin.
+
+    `horizon_min=2` retire J+1 du perimetre. Ce n'est pas un detail de comptage : en
+    production, `predict.predict_next_days` fait `predicted_color = official or ...`,
+    donc des que RTE a annonce le lendemain -- vers 11 h, avant tous nos passages -- la
+    couleur officielle ECRASE la prediction du modele. Ce que le modele dit a J+1 n'est
+    jamais montre. Le backtest, lui, rejoue tout et note J+1 comme les autres : un
+    dixieme de chaque score porte donc sur une question deja resolue au moment ou elle
+    compte. Les comparaisons de `selection_modele.py` s'en trouvent diluees -- et
+    certaines ont ecarte des candidats sur des ecarts de 0,03.
     """
-    return np.array([rules.rouge_possible(m["target"], m["is_holiday"]) for m in meta])
+    # `horizon` absent : l'appelant ne raisonne pas par echeance (le controle de
+    # perimetre, par exemple, qui ne compare que des JOURS). On ne filtre alors pas
+    # dessus plutot que de planter.
+    return np.array([rules.rouge_possible(m["target"], m["is_holiday"])
+                     and m.get("horizon", horizon_min) >= horizon_min for m in meta])
 
 
 def _metrics(y, probs, preds):

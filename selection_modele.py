@@ -70,6 +70,8 @@ RETENU = dict(excluded=config.EXCLUDED_FEATURES, force_quota=True,
 ARBITRAGE = ["blanc_pressure_hiver", "quota_arbitrage"]
 INDISPO = ["offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanned_mw",
            "offline_total_mw", "margin_rte_mw"]
+CHURN = ["forecast_churn"]
+AVANCE = ["rouge_avance", "blanc_avance"]
 
 # La cible du jour est le Blanc, seule couleur sous les 50 % de rappel : 45 %, contre
 # 81 % pour le Bleu et 82 % pour le Rouge. Son erreur se partage en deux moities
@@ -137,14 +139,65 @@ INDISPO = ["offline_nuclear_mw", "offline_nuclear_anomaly_mw", "offline_unplanne
 # Surtout, 2022-2023 se DEGRADE (0,342 -> 0,359) -- l'hiver de la corrosion, celui ou
 # ces colonnes auraient du briller. Hypothese non mesuree : cet hiver-la
 # l'indisponibilite etait si generale qu'elle ne discriminait plus les jours entre eux.
+#
+# CE QUI EST MESURE ICI : deux colonnes, et une correction de perimetre.
+#
+# LA CORRECTION DE PERIMETRE d'abord, parce qu'elle change la lecture de tout le reste.
+# En production, `predict.predict_next_days` fait `predicted_color = official or ...` :
+# des que RTE a annonce le lendemain -- vers 11 h, avant tous nos passages -- la couleur
+# officielle ECRASE la prediction du modele. Ce que le modele dit a J+1 n'est jamais
+# montre. Le backtest, lui, note J+1 comme les autres : un dixieme de chaque score porte
+# sur une question deja resolue. Les deux planchers sont donc affiches cote a cote,
+# J+1 compris et J+1 retire, pour savoir si ce dixieme changeait les verdicts passes.
+#
+# L'INSTABILITE DE LA PREVISION (`forecast_churn`). Le groupe meteo mesure +0,060 en
+# moyenne et -0,076 sur la pire saison : porteur et instable. Une temperature a J+10 ne
+# vaut pas celle de J+2, et le modele n'avait que `horizon` pour le deviner -- une
+# moyenne, jamais le cas particulier. La colonne compare les previsions successives
+# faites pour le MEME jour : celles d'echeance superieure a l'horizon sont deja
+# publiees, donc utilisables sans rien faire entrer du futur. Un jour dont la prevision
+# n'arrete pas de bouger merite moins de confiance qu'un jour stable, et le modele peut
+# desormais le voir. A ne pas confondre avec la coupure par echeance, ecartee : celle-la
+# FRAGMENTAIT l'entrainement, celle-ci ajoute une colonne.
+#
+# L'AVANCE SUR LE QUOTA (`rouge_avance`, `blanc_avance`). Les quotas sont le seul groupe
+# solidement porteur (+0,120, pire saison +0,016) et `rouge_pressure` la seule feature
+# individuellement porteuse des soixante : creuser le signal fort est un meilleur pari
+# qu'en ajouter un faible. Mais `rouge_pressure` dit ce qu'il RESTE par jour restant, un
+# ratio d'etat ; il ne dit jamais si EDF est en AVANCE ou en RETARD sur son rythme
+# habituel. En 2025-2026, treize Rouge sur vingt-deux sont tombes en mars : du
+# rattrapage, que rien ne nommait.
+#
+# Le contre-argument, a mesurer : trois colonnes de plus sur quatre saisons evaluables.
+#
+# MESURE, TOUT ECARTE -- et le tableau ne dit pas ce qu'il a l'air de dire.
+#   perimetre : MEME GAGNANT avec et sans J+1. La correction est juste mais sans
+#     consequence : les verdicts passes n'ont pas ete fausses par ce dixieme.
+#   colonnes  : lu vite, « + les deux » gagne (plancher 0,884 -> 0,875). Trois raisons
+#     de ne pas le croire. Chaque colonne PERD seule (0,886 et 0,916) : si l'une portait
+#     un signal, elle tiendrait seule. Sur la seule saison 2023-2024 les quatre
+#     candidats s'etalent de 0,804 a 0,916, soit 0,112 -- on pretendrait trancher un
+#     gain de 0,009 avec un instrument douze fois plus grossier. Et le rappel du Blanc
+#     recule de facon monotone, 57 -> 56 -> 55 -> 54 %, a mesure qu'on ajoute des
+#     colonnes : cette regularite-la, elle, est coherente.
+#   Les trois colonnes passent dans EXCLUDED_FEATURES. Le code reste pour que la mesure
+#   se refasse quand les saisons se seront accumulees.
 CANDIDATS = [
-    ("sans le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES + INDISPO)),
-    ("avec le calendrier RTE", dict(RETENU, excluded=config.EXCLUDED_FEATURES)),
+    ("reference", dict(RETENU, excluded=config.EXCLUDED_FEATURES + CHURN + AVANCE)),
+    ("+ instabilite meteo", dict(RETENU, excluded=config.EXCLUDED_FEATURES + AVANCE)),
+    ("+ avance quota", dict(RETENU, excluded=config.EXCLUDED_FEATURES + CHURN)),
+    ("+ les deux", dict(RETENU, excluded=config.EXCLUDED_FEATURES)),
 ]
 
 
-def evalue(gbm, X, y, meta):
-    """Mesures sur les seuls jours ou le Rouge est possible."""
+def evalue(gbm, X, y, meta, horizon_min=1):
+    """Mesures sur les seuls jours ou le Rouge est possible.
+
+    `horizon_min=2` retire J+1, dont la couleur est publiee par RTE avant que la page ne
+    soit calculee : le modele ne decide rien a cette echeance-la.
+    """
+    garde = np.array([m["horizon"] >= horizon_min for m in meta])
+    X, y, meta = X[garde], y[garde], [m for m, k in zip(meta, garde) if k]
     probs = gbm.predict_proba(X, meta)
     preds = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
     rouge = y == config.ROUGE
@@ -214,14 +267,20 @@ def main():
     prepares = list(jeux(store, saisons))
     resultats = {}
 
+    sans_j1 = {}
     for nom, reglages in CANDIDATS:
-        par_saison = []
+        par_saison, par_saison_2 = [], []
         for saison, Xtr, ytr, mtr, Xte, yte, mte in prepares:
             gbm = model.TempoModel(**reglages).fit(Xtr, ytr, mtr)
+            # Un seul entrainement, deux perimetres de notation : le second retire J+1,
+            # dont RTE publie la couleur avant que la page ne soit calculee.
             par_saison.append((saison, evalue(gbm, Xte, yte, mte)))
+            par_saison_2.append((saison, evalue(gbm, Xte, yte, mte, horizon_min=2)))
             print(f"  {nom:>20} · {saison} : logloss "
-                  f"{par_saison[-1][1]['logloss']:.3f}", flush=True)
+                  f"{par_saison[-1][1]['logloss']:.3f}  "
+                  f"(sans J+1 : {par_saison_2[-1][1]['logloss']:.3f})", flush=True)
         resultats[nom] = par_saison
+        sans_j1[nom] = par_saison_2
 
     # La precision des alertes Rouge etait calculee sans etre affichee. C'est
     # pourtant la moitie de la question qu'on se pose devant la page : sur dix jours
@@ -236,6 +295,22 @@ def main():
               f"{np.mean([r['rappel_r'] for r in rs]):>8.0%} "
               f"{np.mean([r['prec_r'] for r in rs]):>7.0%} "
               f"{np.mean([r['calibration'] for r in rs]):>11.1%}")
+
+    # LA question du perimetre : le dixieme de score porte par J+1 changeait-il le
+    # classement ? Si les deux colonnes designent le meme gagnant, la correction est
+    # sans effet et il faut le dire ; si elles divergent, tous les verdicts passes ont
+    # ete rendus sur une moyenne partiellement inutile.
+    print(f"\n{'candidat':>20} {'PIRE (J+1..J+10)':>18} {'PIRE (J+2..J+10)':>18} {'ecart':>8}")
+    for nom, _ in CANDIDATS:
+        p1 = max(r["logloss"] for _, r in resultats[nom])
+        p2 = max(r["logloss"] for _, r in sans_j1[nom])
+        print(f"{nom:>20} {p1:>18.3f} {p2:>18.3f} {p2 - p1:>+8.3f}")
+    gagnant1 = min(CANDIDATS, key=lambda c: max(r["logloss"] for _, r in resultats[c[0]]))[0]
+    gagnant2 = min(CANDIDATS, key=lambda c: max(r["logloss"] for _, r in sans_j1[c[0]]))[0]
+    print(f"\nPlancher J+1 compris : « {gagnant1} »  |  J+1 retire : « {gagnant2} »")
+    print("Meme gagnant : la correction de perimetre ne change pas le verdict."
+          if gagnant1 == gagnant2 else
+          "VERDICTS DIFFERENTS : noter J+1 faussait le classement.")
 
     print(f"\nLe Blanc, couleur la plus mal vue (45 % de rappel au depart) :\n")
     print(f"{'candidat':>20} {'rappel B':>9} {'prec. B':>8} "
