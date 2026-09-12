@@ -191,6 +191,11 @@ function fillGauge(color, used, quota) {
 async function loadForecast() {
   const data = await loadJson("forecast");
   document.getElementById("run-date").textContent = data.run_date || "aucun";
+  // La date seule ne dit pas la fraicheur : le 11 septembre a 8 h et le 11 septembre a
+  // 22 h sont deux pages tres differentes, et l'une des deux est peut-etre a jeter.
+  // `derniere_maj` est l'instant ou la collecte a tourne, donc ou ces predictions ont
+  // ete calculees -- pas celui ou le fichier a ete ecrit.
+  majAffichee(data.derniere_maj);
   demarrerCompteARebours(data.cadence, data.derniere_maj);
   tariffs = data.tariffs || null;
   renderTariffGrid();
@@ -311,12 +316,31 @@ function dureeCourte(ms) {
   return h ? `${h} h ${String(min % 60).padStart(2, "0")}` : `${min} min`;
 }
 
+/* L'heure de la derniere mise a jour, dans le fuseau du lecteur. Le serveur horodate en
+   UTC ; l'afficher tel quel demanderait au lecteur francais de retrancher deux heures
+   de tete, et une page qui se veut lisible d'un coup d'oeil ne fait pas faire ca. */
+function majAffichee(iso) {
+  const el = document.getElementById("run-at");
+  if (!el) return;
+  const t = horodatage(iso);
+  el.textContent = t
+    ? "à " + t.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+    : "";
+}
+
+/* Les horodatages du serveur sont en UTC. Certains portent leur decalage, d'autres non
+   -- et une chaine sans fuseau est interpretee comme une heure LOCALE par le
+   navigateur, ce qui decalerait tout de deux heures en ete. On force donc le Z absent. */
+function horodatage(iso) {
+  if (!iso) return null;
+  const t = new Date(/[Z+]|-\d\d:\d\d$/.test(iso.slice(10)) ? iso : iso + "Z");
+  return isNaN(t) ? null : t;
+}
+
 /* « il y a 3 h 20 » — le repli qui reste vrai meme sans cadence connue. */
 function depuis(iso) {
-  if (!iso) return null;
-  const t = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
-  if (isNaN(t)) return null;
-  return dureeCourte(new Date() - t);
+  const t = horodatage(iso);
+  return t ? dureeCourte(new Date() - t) : null;
 }
 
 function demarrerCompteARebours(cadence, derniereMaj) {
