@@ -56,7 +56,9 @@ h1 span { color: var(--fg-dim); font-weight: 500; margin: 0 2px; }
 /* Deux reperes de fraicheur cote a cote : d'ou vient la page, et quand elle bouge. */
 .run-meta { text-align: right; display: flex; gap: 26px; align-items: flex-start; }
 .run-meta strong { display: block; font-family: var(--mono); font-size: 15px; }
-.next-run small {
+/* Portee elargie a tout l'en-tete : les deux blocs -- dernier et prochain calcul --
+   portent la meme paire « valeur en gros, precision en petit ». */
+.run-meta small {
   display: block; margin-top: 2px; color: var(--fg-dim); font-size: 11px;
   font-family: var(--mono);
 }
