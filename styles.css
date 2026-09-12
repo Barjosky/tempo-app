@@ -31,6 +31,40 @@ body {
   min-height: 100vh;
 }
 
+/* ---------- fond photographique ----------
+   L'image est posee par un pseudo-element FIXE plutot que par
+   `background-attachment: fixed`, que Safari mobile ne tient pas : la page defile,
+   le paysage reste.
+
+   Le voile n'est pas un effet de style, c'est ce qui rend la page lisible. L'image
+   porte de la neige eclatante et SA PROPRE TYPOGRAPHIE : sans voile, les chiffres
+   qui comptent -- un prix, une echeance -- passeraient devant un fond clair et
+   charge, et le logo de l'image se retrouverait juste derriere le titre de la page.
+
+   D'ou un voile en trois temps plutot qu'uniforme : tres dense en haut, pour
+   effacer le titre de l'image derriere le notre ; le plus leger vers un tiers de
+   hauteur, ou le paysage a le droit de respirer parce qu'il n'y a que la colonne
+   de gauche ; dense a nouveau en bas, ou les cartes s'accumulent.
+
+   Il ne s'applique QUE si l'image a vraiment ete chargee (classe posee par le
+   script) : sans elle, ajouter un voile ne ferait qu'assombrir le degrade de la
+   page sans rien couvrir. Le site reste donc entier tant que le fichier n'est pas
+   depose. */
+body.a-fond::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image:
+    linear-gradient(180deg, rgba(7,10,15,.93) 0%, rgba(7,10,15,.85) 34%, rgba(7,10,15,.95) 100%),
+    var(--fond);
+  background-size: cover, cover;
+  background-position: center, center top;
+  background-repeat: no-repeat, no-repeat;
+}
+/* Le paysage est large : sur un telephone, `cover` n'en garde qu'une tranche
+   centrale. On le remonte sur le ciel, la partie qui supporte le recadrage. */
+@media (max-width: 640px) {
+  body.a-fond::before { background-position: center, 62% top; }
+}
+
 .grain {
   position: fixed; inset: 0; pointer-events: none; z-index: 99; opacity: .035;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");

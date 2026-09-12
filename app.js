@@ -53,6 +53,24 @@ async function loadJson(endpoint, params = {}) {
   return r.json();
 }
 
+/* ---------- fond photographique ----------
+   Le voile qui rend la page lisible n'a de sens qu'AU-DESSUS d'une image. Le poser
+   d'office assombrirait le degrade sans rien couvrir le jour ou le fichier manque
+   -- a la mise en ligne, ou si quelqu'un le retire. On ne l'active donc qu'une fois
+   l'image reellement chargee, ce que seul le navigateur peut dire.
+
+   `--fond` porte le chemin, en un seul endroit : la feuille de style decide de
+   l'habillage, ce script ne decide que du declenchement. */
+const FOND = "assets/fond.jpg";
+(function poserLeFond() {
+  const img = new Image();
+  img.onload = () => {
+    document.body.style.setProperty("--fond", `url("${FOND}")`);
+    document.body.classList.add("a-fond");
+  };
+  img.src = FOND;
+})();
+
 /* ---------- onglets ---------- */
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
