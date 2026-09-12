@@ -31,6 +31,44 @@ body {
   min-height: 100vh;
 }
 
+/* ---------- fond photographique ----------
+   L'image est posee par un pseudo-element FIXE plutot que par
+   `background-attachment: fixed`, que Safari mobile ne tient pas : la page defile,
+   le paysage reste.
+
+   Le voile n'est pas un effet de style, c'est ce qui rend la page lisible : l'image
+   porte de la neige eclatante, et sans lui les chiffres qui comptent -- un prix, une
+   echeance -- passeraient devant un fond clair et charge.
+
+   Il ne sert PAS a cacher la typographie de l'image : ca, aucun voile ne le fait
+   (du blanc vif sur fond sombre survit a l'assombrissement -- vu au rendu, le titre
+   de l'image traversait le notre). C'est le recadrage qui s'en charge, a la source.
+   Le voile n'a donc plus qu'un travail, et peut rester leger.
+
+   Reste un degrade plutot qu'une valeur unique : le bas de page empile les cartes
+   et demande un peu plus de calme que le haut.
+
+   Il ne s'applique QUE si l'image a vraiment ete chargee (classe posee par le
+   script) : sans elle, ajouter un voile ne ferait qu'assombrir le degrade de la
+   page sans rien couvrir. Le site reste donc entier tant que le fichier n'est pas
+   depose. */
+body.a-fond::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image:
+    linear-gradient(180deg, rgba(7,10,15,.82) 0%, rgba(7,10,15,.78) 30%, rgba(7,10,15,.90) 100%),
+    var(--fond);
+  background-size: cover, cover;
+  background-position: center, center top;
+  background-repeat: no-repeat, no-repeat;
+}
+/* Le paysage recadre est tres panoramique (3,3:1). Sur un ecran haut -- un telephone
+   surtout -- `cover` le zoome fort et n'en garde qu'une tranche verticale. On la
+   prend a droite : c'est la que sont la vallee et les lignes, alors que le centre
+   n'offre qu'un versant. */
+@media (max-width: 640px) {
+  body.a-fond::before { background-position: center, 68% center; }
+}
+
 .grain {
   position: fixed; inset: 0; pointer-events: none; z-index: 99; opacity: .035;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
@@ -161,6 +199,35 @@ main { padding: 28px 40px 72px; }
   background: var(--blanc); box-shadow: 0 0 0 5px rgba(233,237,242,.12);
 }
 
+/* ---------- ruban : la forme des dix jours ----------
+   Une case par journee, a largeur egale, sur une seule ligne. `grid` plutot que
+   `flex` pour que la onzieme case ne soit pas plus etroite que les autres : un
+   ruban dont les cases varient se lit comme une donnee, alors que la largeur ne
+   veut rien dire ici. `minmax(0, 1fr)` empeche le contenu d'imposer sa largeur et de
+   faire deborder la ligne sur telephone. */
+.ruban {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  gap: 5px; margin-bottom: 18px;
+}
+.rj {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 8px 2px 7px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--ink-2); color: var(--fg-dim); font-family: inherit;
+  cursor: pointer; transition: border-color .16s, transform .16s;
+}
+.rj:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--col) 55%, var(--line)); }
+.rj:focus-visible { outline: 2px solid var(--col); outline-offset: 2px; }
+/* La couleur du jour EST l'information : elle occupe la barre, pas un simple lisere. */
+.rj-bar { width: 100%; height: 6px; border-radius: 3px; background: var(--col); }
+.rj[data-color="3"] .rj-bar { box-shadow: 0 0 10px rgba(255,87,87,.7); }
+.rj-dow { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; }
+.rj-num { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--fg); line-height: 1; }
+/* Un jour qui a change d'avis se repere sur le ruban avant d'ouvrir sa carte. */
+.rj-chg {
+  position: absolute; top: -3px; right: -3px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--amber); border: 2px solid var(--ink);
+}
+
 /* cartes jour */
 /* `align-items: start` : sans lui, la grille etire chaque carte a la hauteur de la plus
    haute de sa rangee, et une journee calme -- dont la carte est justement repliee pour
@@ -195,6 +262,31 @@ main { padding: 28px 40px 72px; }
   font-family: var(--mono); font-size: 10px; color: var(--fg-dim);
   border: 1px solid var(--line); padding: 2px 7px; border-radius: 20px; white-space: nowrap;
 }
+
+/* Cible d'un clic sur le ruban : sans ce repere, le defilement depose le lecteur
+   devant onze cartes identiques sans lui dire laquelle il visait. */
+.day.is-cible { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+
+/* Le revirement depuis la veille. Ambre et non rouge : ce n'est pas une alerte de
+   plus, c'est un CHANGEMENT -- il doit se distinguer de la couleur annoncee, qui
+   porte deja tout le reste de la carte. */
+.change {
+  display: flex; align-items: center; gap: 7px; margin: 10px 0 0;
+  padding: 6px 9px; border-radius: 8px; font-size: 11.5px; line-height: 1.35;
+  background: rgba(247,194,73,.1); border: 1px solid rgba(247,194,73,.28);
+  color: #f3d795;
+}
+.change .arrow {
+  flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber);
+}
+
+/* Ce que vaut la prediction A CETTE ECHEANCE. Discret par construction : c'est une
+   nuance sur l'annonce, pas une annonce. */
+.fiab {
+  margin: 10px 0 0; padding-top: 9px; border-top: 1px dashed var(--line);
+  font-size: 11px; line-height: 1.4; color: var(--fg-dim);
+}
+.fiab b { color: var(--fg); font-family: var(--mono); font-weight: 600; }
 
 .verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; }
 .chip { width: 11px; height: 11px; border-radius: 50%; background: var(--col); box-shadow: 0 0 12px var(--col); }
@@ -393,6 +485,14 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
   .t-row span { font-size: 10px; }
   .t-row b { font-size: 12.5px; }
   .temp { font-size: 11px; }
+  /* Onze cases sur ~370px utiles : la case tombe a 28px, le jour abrege n'y tient
+     plus et le numero suffit a se reperer. */
+  .ruban { gap: 3px; }
+  .rj { padding: 6px 1px 5px; }
+  .rj-dow { display: none; }
+  .rj-num { font-size: 13px; }
+  .fiab { font-size: 10px; }
+  .change { font-size: 10.5px; padding: 5px 7px; }
 }
 
 /* ---------- periode d'evaluation ---------- */
@@ -414,7 +514,7 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .rel-got { background: var(--rouge); }
 .rel-val { text-align: right; font-variant-numeric: tabular-nums; }
 .rel-n { text-align: right; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-/* Un ecart de plus de 20 points entre l'annonce et le reel se voit. */
+/* Un ecart de plus de 20 points enotre l'annonce et le reel se voit. */
 .rel-row.is-off .rel-val { color: var(--amber); }
 .rel-key {
   display: flex; gap: 18px; margin-top: 12px; font-size: 11px; color: var(--fg-dim);

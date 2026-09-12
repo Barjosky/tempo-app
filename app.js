@@ -53,6 +53,24 @@ async function loadJson(endpoint, params = {}) {
   return r.json();
 }
 
+/* ---------- fond photographique ----------
+   Le voile qui rend la page lisible n'a de sens qu'AU-DESSUS d'une image. Le poser
+   d'office assombrirait le degrade sans rien couvrir le jour ou le fichier manque
+   -- a la mise en ligne, ou si quelqu'un le retire. On ne l'active donc qu'une fois
+   l'image reellement chargee, ce que seul le navigateur peut dire.
+
+   `--fond` porte le chemin, en un seul endroit : la feuille de style decide de
+   l'habillage, ce script ne decide que du declenchement. */
+const FOND = "assets/fond.jpg";
+(function poserLeFond() {
+  const img = new Image();
+  img.onload = () => {
+    document.body.style.setProperty("--fond", `url("${FOND}")`);
+    document.body.classList.add("a-fond");
+  };
+  img.src = FOND;
+})();
+
 /* ---------- onglets ---------- */
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -69,6 +87,10 @@ document.querySelectorAll(".tab").forEach((tab) => {
    export anterieur a son ajout n'en a pas : on affiche alors les couleurs sans prix
    plutot que d'inventer un bareme perime. */
 let tariffs = null;
+/* Ce que vaut une prediction a son echeance, mesure sur les jours eligibles et servi
+   avec la prevision elle-meme. Une page exportee avant son ajout n'en a pas : on se
+   tait alors, plutot que d'afficher un taux invente. */
+let fiabilite = null;
 
 function renderTariffGrid() {
   const body = document.querySelector("#tariff-grid tbody");
@@ -113,11 +135,59 @@ function tariffBlock(color) {
     </div>`;
 }
 
+/* Ce qu'on sait DE CETTE ECHEANCE-LA, pas du modele en general.
+
+   Le chiffre existait deja, mais dans l'onglet Historique, derriere deux filtres a
+   regler. Il repond a la seule question que pose une carte d'alerte : « est-ce que
+   je m'organise pour ca ? ». Un jour Blanc annonce a J+8 et un jour Rouge annonce a
+   J+2 n'engagent pas du tout autant.
+
+   Trois garde-fous : rien sur un jour officiel (RTE a tranche, la mesure ne s'y
+   applique pas), rien sur un jour Bleu (le lecteur ne decide rien, et repeter un taux
+   sur onze cartes le rendrait invisible la ou il compte), rien sous 30 cas mesures --
+   le serveur ne publie deja pas ces echeances-la. */
+function fiabiliteBlock(d) {
+  if (!fiabilite || d.official || d.color === 1) return "";
+  const f = fiabilite[String(d.horizon)];
+  const prec = f && f.precision[d.color];
+  if (prec == null) return "";
+  const part = fraction(prec);
+  const dit = part
+    ? `<b>${part[0]} annonce${part[0] > 1 ? "s" : ""} ${NAMES[d.color]} sur ${part[1]}</b> se confirment`
+    : `<b>${pct(prec)}</b> des annonces ${NAMES[d.color]} se confirment`;
+  return `<p class="fiab" title="Mesuré sur ${f.annonces[d.color]} annonces ${NAMES[d.color]} à J+${d.horizon}, jours ouvrés de novembre à mars hors fériés.">À J+${d.horizon}, ${dit}.</p>`;
+}
+
+/* « 2 sur 3 » se lit d'un coup d'oeil la ou « 66 % » demande un effort. Encore
+   faut-il que la fraction soit VRAIE : on ne l'accepte qu'a moins de 3 points du taux
+   mesure, et on retombe sur le pourcentage sinon plutot que d'arrondir un 58 % en
+   « 3 sur 5 ». Denominateurs limites a 5 : au-dela la fraction ne se lit plus. */
+function fraction(x) {
+  for (let d = 2; d <= 5; d++) {
+    const n = Math.round(x * d);
+    if (n > 0 && n < d && Math.abs(n / d - x) < 0.03) return [n, d];
+  }
+  return null;
+}
+
+/* La page montrait un etat, jamais un mouvement. Un revirement depuis la veille est
+   pourtant l'information la plus actionnable qu'on ait -- et la plus honnete a
+   afficher, parce qu'elle CONSTATE au lieu de promettre. */
+function changeBlock(d) {
+  if (!d.change) return "";
+  return `<p class="change" data-from="${d.change.from}">
+      <span class="arrow" aria-hidden="true"></span>
+      ${d.change.from_name} → ${d.color_name} depuis hier</p>`;
+}
+
 /* Une journee est « calme » quand il n'y a rien a decider : Bleu, et sans hesitation
    serieuse. Sa carte se replie alors, pour que les journees qui comptent ressortent
    d'elles-memes au lieu d'etre noyees dans un mur de cartes identiques. */
 function estCalme(d) {
   if (d.color !== 1) return false;
+  // Un jour qui vient de RETOMBER au Bleu a quelque chose a dire, meme s'il est Bleu :
+  // le replier effacerait precisement l'information qu'on vient d'ajouter.
+  if (d.change) return false;
   if (!d.p) return true;
   return d.p[1] < 0.12 && d.p[2] < 0.05;
 }
@@ -178,6 +248,44 @@ function renderAlert(days) {
     </div>`;
 }
 
+/* La FORME des dix jours, d'un seul coup d'oeil.
+
+   Onze cartes empilees ne se resument pas : sur un telephone on en voit une et demie,
+   et repondre a « c'est quand, le prochain jour cher ? » demande de faire defiler.
+   Le ruban donne la reponse avant meme de lire -- c'est ce qu'on regarde en premier,
+   et c'est justement ce que la page ne montrait pas.
+
+   Il ne remplace aucune carte : il y conduit. Un clic fait defiler jusqu'a la
+   journee, ou se trouve le detail. */
+function renderRuban(days) {
+  const box = document.getElementById("ruban");
+  if (!box) return;
+  box.innerHTML = days.map((d, i) => {
+    const f = fmtDate(d.date);
+    const titre = `${f.dow} ${f.num} ${f.month} — ${d.color_name}`
+      + (d.official ? " (officiel RTE)" : "")
+      + (d.change ? `, ${d.change.from_name} hier` : "");
+    return `<button type="button" class="rj" data-color="${d.color}" data-i="${i}"
+              style="--col:${COLORS[d.color]}" title="${titre}" aria-label="${titre}">
+        <span class="rj-bar"></span>
+        <span class="rj-dow">${d.horizon === 0 ? "auj." : f.dow.toLowerCase()}</span>
+        <span class="rj-num">${f.num}</span>
+        ${d.change ? '<span class="rj-chg" aria-hidden="true"></span>' : ""}
+      </button>`;
+  }).join("");
+  box.querySelectorAll(".rj").forEach((b) => {
+    b.addEventListener("click", () => {
+      const carte = document.querySelectorAll("#days .day")[+b.dataset.i];
+      if (!carte) return;
+      carte.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Le defilement seul laisse chercher LAQUELLE des onze cartes on visait : la
+      // cible se signale donc brievement d'elle-meme.
+      carte.classList.add("is-cible");
+      setTimeout(() => carte.classList.remove("is-cible"), 1400);
+    });
+  });
+}
+
 /* La barre represente ce qui RESTE, comme son titre. Elle montrait le consomme :
    « BLEUS RESTANTS 288 » surmontait donc une barre quasi vide, le chiffre et le
    dessin racontant l'inverse l'un de l'autre. */
@@ -199,6 +307,7 @@ async function loadForecast() {
   // Le rechargement automatique reste : il ne promet rien, il constate.
   guetterNouvellesDonnees();
   tariffs = data.tariffs || null;
+  fiabilite = data.fiabilite || null;
   renderTariffGrid();
 
   const s = data.season;
@@ -217,6 +326,7 @@ async function loadForecast() {
     return;
   }
   renderAlert(data.days);
+  renderRuban(data.days);
   box.innerHTML = data.days.map((d, i) => {
     const f = fmtDate(d.date);
     const calme = estCalme(d);
@@ -252,8 +362,10 @@ async function loadForecast() {
           ${d.official ? '<span class="tag">officiel RTE</span>' : ""}
         </div>
         ${temp ? `<div class="temp">${temp}</div>` : ""}
+        ${changeBlock(d)}
         ${tariffBlock(d.color)}
         ${proba}
+        ${fiabiliteBlock(d)}
       </article>`;
   }).join("");
 }

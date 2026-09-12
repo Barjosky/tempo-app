@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import fixtures
 import ingest_rte
-from src import cadence, db, features, model
+from src import cadence, db, features, model, rules
 from src.sources import calendrier, rte
 
 _STORE = {}
@@ -302,7 +302,6 @@ def test_l_empreinte_des_assets_suit_leur_contenu():
     """
     import re
     import shutil
-    import tempfile
     import export_static
 
     racine = Path(__file__).parent.parent
@@ -868,3 +867,86 @@ def test_neutraliser_une_feature_perime_le_modele_en_cache():
             predict.MODEL_PATH = original
     assert erreur and "neutralis" in erreur, (
         "un modele entraine avec d'autres features neutralisees a ete accepte")
+
+
+def _base_avec_predictions(rangees, jours, chemin=":memory:"):
+    """Base portant les jours et les predictions donnes."""
+    conn = db.connect(chemin)
+    db.init_db(conn)
+    for j, couleur, ferie in jours:
+        conn.execute("INSERT OR REPLACE INTO days VALUES (?,?,?,?,?,?,?)",
+                     (j, "2024-2025", couleur, date.fromisoformat(j).weekday(),
+                      ferie, "test", ""))
+    db.insert_predictions(conn, rangees)
+    return conn
+
+
+def _jours_eligibles(depuis, combien):
+    """Des jours ou le modele a vraiment un choix : ouvres, dans la fenetre Rouge."""
+    out, j = [], depuis
+    while len(out) < combien:
+        if j.weekday() < 5 and j.month in rules.ROUGE_MONTHS:
+            out.append(j)
+        j += timedelta(days=1)
+    return out
+
+
+def test_une_precision_sans_assez_d_annonces_n_est_pas_publiee():
+    """Trois annonces justes sur quatre, ce n'est pas « 75 % » -- c'est une anecdote.
+
+    Une echeance peut totaliser des centaines de predictions et n'avoir dit Blanc que
+    quatre fois. Le seuil global ne protege pas de ca : c'est le denominateur de LA
+    COULEUR qui decide, et la page affiche cette phrase a cote d'un jour a 0,1921 €.
+    """
+    import app as web
+    jours, rangees = [], []
+    # Toutes ces journees tombent Rouge. Le modele dit Rouge 40 fois, Blanc 4 fois,
+    # Bleu le reste : Rouge doit sortir mesure, Blanc doit se taire.
+    for i, j in enumerate(_jours_eligibles(date(2025, 1, 6), 60)):
+        jours.append((j.isoformat(), 3, 0))
+        dit = 3 if i < 40 else (2 if i < 44 else 1)
+        run = j - timedelta(days=2)
+        rangees.append(dict(run_datetime=run.isoformat() + "T10:00:00+00:00",
+                            run_date=run.isoformat(), target_date=j.isoformat(),
+                            horizon=2, p_bleu=.3, p_blanc=.3, p_rouge=.4,
+                            predicted_color=dit, model_version="backtest1",
+                            is_official=0))
+    conn = _base_avec_predictions(rangees, jours)
+    f = web.fiabilite_par_horizon(conn)["2"]
+    assert f["n"] == 60, f["n"]
+    assert f["annonces"][2] == 4 and f["annonces"][3] == 40, f["annonces"]
+    assert f["precision"][2] is None, "4 annonces Blanc ne font pas une mesure"
+    assert f["precision"][3] == 1.0, f["precision"][3]
+
+
+def test_un_jour_devenu_officiel_n_est_pas_un_revirement():
+    """RTE qui tranche n'est pas le modele qui change d'avis.
+
+    La veille, le modele disait Bleu pour le lendemain ; ce matin RTE annonce Rouge.
+    La carte doit porter « officiel RTE », surement pas « Bleu -> Rouge depuis
+    hier », qui ferait passer une publication pour une hesitation du modele.
+
+    Le test passe par l'API, et non par `changements` seule : c'est la que les deux
+    informations se rencontrent, donc la que le contresens pourrait apparaitre.
+    """
+    import app as web
+    commun = dict(horizon=1, p_bleu=.8, p_blanc=.15, p_rouge=.05, model_version="v1")
+    chemin = str(Path(tempfile.mkdtemp()) / "t.db")
+    _base_avec_predictions([
+        dict(commun, run_datetime="2025-01-14T10:00:00+00:00", run_date="2025-01-14",
+             target_date="2025-01-15", predicted_color=1, is_official=0),
+        dict(commun, run_datetime="2025-01-15T10:00:00+00:00", run_date="2025-01-15",
+             target_date="2025-01-16", predicted_color=1, is_official=0),
+    ], [("2025-01-15", 3, 0)], chemin).close()
+    ancien = config.DB_PATH
+    config.DB_PATH = chemin
+    try:
+        with web.app.test_client() as c:
+            jours = {d["date"]: d for d in c.get("/api/forecast").get_json()["days"]}
+    finally:
+        config.DB_PATH = ancien
+    veille = jours["2025-01-15"]
+    assert veille["official"] is True, "RTE a publie : la journee est officielle"
+    assert "change" not in veille, "une publication RTE n'est pas un revirement du modele"
+    # Le lendemain, lui, n'a pas d'avis de la veille a comparer : pas de marqueur non plus.
+    assert "change" not in jours["2025-01-16"]
