@@ -70,6 +70,13 @@ Ce qui n'est pas encore tranché, pour ne pas le redécouvrir :
   est aujourd'hui trop maigre (une dizaine de lignes) ; dès novembre il dira, en quelques
   semaines, si le modèle tient ses promesses sur un hiver qu'il n'a pas vu. C'est la
   seule chose que j'ajouterais avant l'hiver — un moyen de savoir tôt, pas une feature.
+- **Le compteur de visites dépend d'un tiers** (`hits.sh`), parce qu'un site statique
+  ne peut pas compter lui-même. Il affiche des **visites**, pas des visiteurs — un
+  même lecteur qui revient compte à chaque fois, et la page le dit. Ce genre de
+  service finit toujours par fermer : le jour où il tombe, le bloc ne s'affiche plus
+  du tout, par construction (il part masqué et ne se montre qu'à l'image reçue).
+  Ce n'est donc pas une panne à réparer dans l'urgence — juste un chiffre qui
+  disparaît. Le remplaçant sérieux serait GoatCounter, qui demande une inscription.
 - **Question ouverte sur les indisponibilités RTE** : 70 % des paliers sont à la
   puissance installée entière, sans qu'on sache séparer « arrêt total publié » de
   « repli sur la puissance installée ». Borne haute du repli 70 %, borne basse 0 %.
