@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=d4f7d873">
+<link rel="stylesheet" href="styles.css?v=f3ddfdc9">
 </head>
 <body>
 <div class="grain" aria-hidden="true"></div>
@@ -154,6 +154,19 @@
   </section>
 </main>
 
-<script src="app.js?v=846e0e6a"></script>
+<!-- Le compteur est un service tiers (hits.sh) : il n'y a pas de serveur ici pour
+     compter. `referrerpolicy` lui interdit d'apprendre d'ou vient le visiteur -- il
+     n'en a pas besoin, la cle du compteur est dans l'URL. Pas de `loading="lazy"` :
+     le pied de page est sous la ligne de flottaison, et une image differee ne se
+     chargerait jamais chez qui ne fait pas defiler -- le compteur sous-compterait. -->
+<footer class="pied">
+  <p class="compteur" id="compteur" hidden>
+    <img id="compteur-img" alt="Nombre de visites" referrerpolicy="no-referrer"
+         src="https://hits.sh/barjosky.github.io/tempo-app.svg?style=flat-square&label=visites&labelColor=141a23&color=25405e">
+    <small>Visites, pas visiteurs : un même lecteur qui revient compte à chaque fois.</small>
+  </p>
+</footer>
+
+<script src="app.js?v=8d1b7f2e"></script>
 </body>
 </html>

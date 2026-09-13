@@ -71,6 +71,31 @@ const FOND = "assets/fond.jpg";
   img.src = FOND;
 })();
 
+/* ---------- compteur de visites ----------
+   Le site est statique : aucun serveur ici ne peut compter. Le chiffre vient donc
+   d'un tiers (hits.sh), sous forme d'image -- ce qui evite le CORS, marche sans
+   JavaScript cote compte, et ne casse rien si le service repond mal.
+
+   Le bloc part MASQUE et ne se montre qu'une fois l'image arrivee. Un service tiers
+   finit toujours par tomber, changer d'URL ou fermer, et ce jour-la la page ne doit
+   pas afficher une image brisee sous un trait de separation : elle doit simplement
+   ne rien afficher. Meme principe que le fond -- on n'annonce que ce qu'on a. */
+(function compteur() {
+  const bloc = document.getElementById("compteur");
+  const img = bloc && document.getElementById("compteur-img");
+  if (!img) return;
+  const montrer = () => { bloc.hidden = false; };
+  img.addEventListener("load", montrer);
+  // Le `hidden` initial suffit a l'echec : rien a faire de plus que de ne pas montrer.
+  img.addEventListener("error", () => { bloc.hidden = true; });
+  // Ce script est en fin de page : l'image a pu finir d'arriver AVANT qu'on ecoute,
+  // et l'evenement `load` est alors deja passe pour toujours. `complete` rattrape ce
+  // cas, `naturalWidth` distingue l'image arrivee de celle qui a echoue -- les deux
+  // sont `complete`. Sans ca, le compteur ne s'affichait jamais quand tout allait
+  // bien, ce qui est la pire des pannes : silencieuse et du bon cote.
+  if (img.complete && img.naturalWidth > 0) montrer();
+})();
+
 /* ---------- onglets ---------- */
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
