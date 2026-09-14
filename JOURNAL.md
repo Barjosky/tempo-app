@@ -660,6 +660,40 @@ silence, et il aurait fallu **penser** à relancer l'entraînement.
 Quatrième répétition de la même leçon. `load()` compare désormais les features
 neutralisées du modèle à celles de la configuration, et un test le verrouille.
 
+## Une source tombée a emporté tout le passage (14 septembre 2026)
+
+Run 41, le seul échec sur 41. Open-Meteo a répondu **200 avec un corps qui n'était pas
+du JSON** sur l'archive ERA5, trois tentatives de suite (~108 s, `HTTP_TIMEOUT = 60`).
+
+Ce qui avait déjà réussi quand la collecte est morte :
+
+| Étape | Résultat |
+|---|---|
+| Couleurs officielles | à jour jusqu'au 2026-09-15 |
+| Indisponibilités RTE | 218 arrêts, 219 paliers, **100 %** avec paliers publiés |
+| Base | 136 873 paliers, 50 611 arrêts distincts |
+| Prévision du jour | **jamais calculée** |
+
+ERA5 a **six jours de retard** par construction (`end = run_date - 6`) : la donnée la
+moins urgente de la chaîne a empêché de publier la plus urgente.
+
+Deux corrections, deux leçons déjà connues ailleurs dans ce dépôt :
+
+1. **Le diagnostic était jeté.** Le message remonté était
+   `Expecting value: line 1 column 1 (char 0)` — ni l'URL, ni le code HTTP, ni le
+   corps. `ErreurRTE` porte ces trois choses depuis longtemps ; `meteo.py` n'avait
+   jamais reçu la leçon. `ErreurMeteo` la lui applique.
+2. **Une panne isolée ne doit pas tout arrêter** — `ingest_rte.py` le fait déjà pour
+   ses fenêtres. Les sources qui portent sur le *passé* (ERA5, éolien/solaire,
+   eCO2mix) se rattrapent au passage suivant et sont donc optionnelles ; la prévision
+   météo reste bloquante, parce que publier les couleurs d'hier en les datant
+   d'aujourd'hui est pire que ne pas publier.
+
+**Le repli n'est pas le silence.** Une source peut tomber une fois ou rester morte des
+semaines, et de l'extérieur les deux se ressemblent. La panne est consignée dans
+`.degradations`, et l'atelier rougit le passage **après** la publication : la page est
+fraîche *et* l'alarme est visible.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

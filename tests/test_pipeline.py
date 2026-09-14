@@ -950,3 +950,64 @@ def test_un_jour_devenu_officiel_n_est_pas_un_revirement():
     assert "change" not in veille, "une publication RTE n'est pas un revirement du modele"
     # Le lendemain, lui, n'a pas d'avis de la veille a comparer : pas de marqueur non plus.
     assert "change" not in jours["2025-01-16"]
+
+
+class _Reponse:
+    """Une reponse HTTP minimale, pour rejouer ce qu'un service a vraiment renvoye."""
+
+    def __init__(self, corps, status=200):
+        self.corps, self.status = corps, status
+
+    def read(self):
+        return self.corps
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+def test_une_reponse_sans_json_dit_ce_qu_elle_contenait():
+    """La panne du 14 septembre 2026, et ce qu'elle n'apprenait pas.
+
+    Open-Meteo a repondu 200 avec un corps qui n'etait pas du JSON. Le message
+    remonte etait `Expecting value: line 1 column 1 (char 0)` : ni l'URL, ni le code,
+    ni ce qu'il y avait a la place. Impossible de savoir s'il fallait reessayer ou
+    corriger quelque chose -- donc impossible de decider quoi que ce soit.
+    """
+    from src.sources import meteo
+    vrai_urlopen, vrai_sleep = meteo.urllib.request.urlopen, meteo.time.sleep
+    meteo.urllib.request.urlopen = lambda *a, **k: _Reponse(
+        b"<html><title>502 Bad Gateway</title></html>", 200)
+    meteo.time.sleep = lambda _: None
+    try:
+        meteo._get(meteo.ARCHIVE_URL, {"latitude": 48.8})
+        raise AssertionError("une reponse non-JSON doit lever")
+    except meteo.ErreurMeteo as e:
+        assert "502 Bad Gateway" in e.corps, e.corps
+        assert "archive-api" in e.url, e.url
+        assert e.code == 200, e.code
+    finally:
+        meteo.urllib.request.urlopen, meteo.time.sleep = vrai_urlopen, vrai_sleep
+
+
+def test_une_source_optionnelle_qui_tombe_n_emporte_pas_le_passage():
+    """ERA5 a six jours de retard : il ne peut pas bloquer la prevision du jour.
+
+    C'est pourtant ce qui est arrive -- les couleurs officielles etaient a jour, RTE
+    avait livre ses arrets, et rien n'a ete publie. La panne doit etre consignee, pas
+    propagee : la page se met a jour, et l'atelier rougit ensuite.
+    """
+    import collector
+    collector._degradees.clear()
+    try:
+        def tombe():
+            raise RuntimeError("corps vide")
+
+        assert collector.optionnelle("meteo observee (ERA5)", tombe) is None
+        assert collector.optionnelle("temoin", lambda: 7) == 7
+        assert len(collector._degradees) == 1, collector._degradees
+        assert "ERA5" in collector._degradees[0] and "corps vide" in collector._degradees[0]
+    finally:
+        collector._degradees.clear()

@@ -9,6 +9,7 @@ Le backtest n'utilise que des `lead > 0` pour eviter de tricher avec une meteo p
 import json
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
@@ -23,16 +24,64 @@ PREVIOUS_RUNS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 
+class ErreurMeteo(Exception):
+    """Refus d'Open-Meteo, avec ce qu'il a REELLEMENT repondu -- pas seulement son type.
+
+    Le 14 septembre 2026, la collecte est morte sur
+    `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. Ce message dit une
+    seule chose : le corps ne commencait pas par du JSON. Ni quelle URL, ni quel code
+    HTTP, ni ce qu'il y avait a la place -- page de maintenance, corps vide, coupure
+    d'un intermediaire ? Impossible de trancher, donc impossible de savoir s'il
+    fallait reessayer ou corriger quelque chose.
+
+    Meme lecon que pour RTE (`ErreurRTE`), qui explique ses refus dans le CORPS de la
+    reponse : jeter le corps pour ne garder que le type de l'erreur revient a jeter le
+    diagnostic et a deviner ensuite.
+    """
+
+    def __init__(self, url, code, corps):
+        self.url, self.code, self.corps = url, code, corps
+        super().__init__(f"HTTP {code} sur {url} — {corps}")
+
+
+def _extrait(brut):
+    """Le corps de la reponse, tronque et sur une ligne : c'est un message d'erreur."""
+    try:
+        texte = brut.decode("utf-8", "replace")
+    except Exception:
+        return "(corps illisible)"
+    texte = " ".join(texte.split())
+    return texte[:300] if texte else "(corps vide)"
+
+
+def _tentative(req, cible):
+    try:
+        with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
+            brut, code = r.read(), getattr(r, "status", 200)
+    except urllib.error.HTTPError as e:
+        try:
+            corps = _extrait(e.read())
+        except Exception:
+            corps = "(corps illisible)"
+        raise ErreurMeteo(cible, e.code, corps) from None
+    try:
+        data = json.loads(brut.decode("utf-8"))
+    except ValueError:
+        # Un 200 qui ne porte pas de JSON : c'est ce cas-la qui a tue la collecte, et
+        # c'est le corps -- lui seul -- qui dit pourquoi.
+        raise ErreurMeteo(cible, code, _extrait(brut)) from None
+    if data.get("error"):
+        raise ErreurMeteo(cible, code, str(data.get("reason")))
+    return data
+
+
 def _get(url, params, retries=3):
     qs = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{url}?{qs}", headers={"User-Agent": "tempo-predictor/1.0"})
+    cible = f"{url}?{qs}"
+    req = urllib.request.Request(cible, headers={"User-Agent": "tempo-predictor/1.0"})
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
-                data = json.loads(r.read().decode())
-            if data.get("error"):
-                raise RuntimeError(data.get("reason"))
-            return data
+            return _tentative(req, cible)
         except Exception:
             if attempt == retries - 1:
                 raise
