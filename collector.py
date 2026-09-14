@@ -15,6 +15,41 @@ from src import db, features, predict
 from src.sources import calendrier, eco2mix, meteo, tempo_api
 
 
+# Ce fichier n'existe que le temps d'un passage : il dit a l'atelier, APRES la
+# publication, qu'une source a manque. Il est dans l'espace de travail et non dans
+# `store/`, qui est mis en cache : un marqueur perime y survivrait d'un run a l'autre
+# et signalerait une panne deja passee.
+DEGRADATIONS = Path(__file__).parent / ".degradations"
+_degradees = []
+
+
+def optionnelle(nom, fonction, *args):
+    """Une source dont la panne ne doit PAS emporter le passage entier.
+
+    Le 14 septembre 2026, Open-Meteo a rendu un corps vide sur l'archive ERA5 et la
+    collecte est morte -- alors que les couleurs officielles etaient a jour, que RTE
+    avait livre ses 218 arrets, et que la prevision du jour ne demandait rien de plus.
+    ERA5 a SIX JOURS de retard par construction (`run_date - 6`) : c'est la donnee la
+    moins urgente de la chaine, et elle a empeche de publier la plus urgente.
+
+    Le repli n'est pas le silence pour autant. Une source peut tomber une fois -- ca
+    se rattrape au passage suivant -- ou rester morte des semaines, et de l'exterieur
+    les deux se ressemblent. La panne est donc consignee, et l'atelier rougit le
+    passage APRES avoir publie : la page est fraiche ET l'alarme est visible.
+    """
+    try:
+        return fonction(*args)
+    except Exception as exc:
+        _degradees.append(f"{nom} : {exc}")
+        print(f"Source degradee, on continue sans elle — {nom} : {exc}")
+        return None
+
+
+def chiffre(n):
+    """« aucune » plutot que « None » : ces lignes se lisent en cherchant une panne."""
+    return "aucune (source degradee)" if n is None else n
+
+
 def refresh_colors(conn):
     """Couleurs officielles : saison en cours (inclut le J+1 annonce par RTE)."""
     season = calendrier.season_of(date.today())
@@ -104,6 +139,10 @@ def refresh_conso(conn, run_date):
 
 def main():
     run_date = date.today()
+    # Toujours effacer avant de commencer : un marqueur qui survit a son passage
+    # ferait rougir le suivant pour une panne deja reparee.
+    DEGRADATIONS.unlink(missing_ok=True)
+    _degradees.clear()
     conn = db.connect()
     db.init_db(conn)
 
@@ -111,15 +150,19 @@ def main():
     ensure_calendar(conn, run_date)
     print(f"Couleurs officielles a jour jusqu'au {last_known}")
 
-    n_obs = refresh_observed_weather(conn, run_date)
+    # Ce qui est OPTIONNEL porte sur le passe et se rattrape au passage suivant ;
+    # ce qui est STRICT nourrit la prediction du jour. La prevision meteo reste donc
+    # bloquante : sans elle on publierait les couleurs d'hier en les datant
+    # d'aujourd'hui, ce qui est pire que ne pas publier.
+    n_obs = optionnelle("meteo observee (ERA5)", refresh_observed_weather, conn, run_date)
     n_fc = refresh_forecast_weather(conn, run_date)
-    print(f"Meteo : {n_obs} jours observes ajoutes, {n_fc} echeances de prevision")
+    print(f"Meteo : {chiffre(n_obs)} jours observes ajoutes, {n_fc} echeances de prevision")
 
-    n_ren = refresh_renewables(conn, run_date)
-    print(f"Eolien/solaire : {n_ren} echeances")
+    n_ren = optionnelle("eolien/solaire", refresh_renewables, conn, run_date)
+    print(f"Eolien/solaire : {chiffre(n_ren)} echeances")
 
-    n_conso = refresh_conso(conn, run_date)
-    print(f"Consommation reelle (eCO2mix) : {n_conso} jours")
+    n_conso = optionnelle("consommation (eCO2mix)", refresh_conso, conn, run_date)
+    print(f"Consommation reelle (eCO2mix) : {chiffre(n_conso)} jours")
 
     store = features.FeatureStore(conn)
     if "--train" in sys.argv or predict.besoin_d_entrainement():
@@ -141,6 +184,11 @@ def main():
         tag = " (officiel RTE)" if r["is_official"] else ""
         print(f"  J+{r['horizon']:<2} {r['target_date']}  {names[r['predicted_color']]:<5}"
               f"  bleu {r['p_bleu']:.0%} blanc {r['p_blanc']:.0%} rouge {r['p_rouge']:.0%}{tag}")
+
+    if _degradees:
+        DEGRADATIONS.write_text("\n".join(_degradees) + "\n", encoding="utf-8")
+        print(f"\n{len(_degradees)} source(s) degradee(s) — la prevision est publiee, "
+              "mais le passage sera signale en echec.")
 
 
 if __name__ == "__main__":

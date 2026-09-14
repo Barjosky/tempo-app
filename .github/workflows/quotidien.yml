@@ -225,3 +225,22 @@ jobs:
             echo "::error::Publication impossible apres trois tentatives"
             exit 1
           fi
+
+      # EN DERNIER, et c'est tout l'interet : une source tombee ne doit pas empecher
+      # de publier, mais elle ne doit pas passer inapercue non plus. La prevision est
+      # deja en ligne quand cette etape rougit le passage.
+      #
+      # `if: always()` parce qu'une etape precedente peut avoir echoue pour une autre
+      # raison : le marqueur doit quand meme etre lu et affiche, sinon on debuggerait
+      # la mauvaise panne.
+      - name: Signaler les sources degradees
+        if: always()
+        run: |
+          if [ -s .degradations ]; then
+            while IFS= read -r ligne; do
+              echo "::error::Source degradee — $ligne"
+            done < .degradations
+            echo "La prevision a ete publiee sans ces sources. Une panne isolee se"
+            echo "rattrape au passage suivant ; repetee, elle demande un correctif."
+            exit 1
+          fi
