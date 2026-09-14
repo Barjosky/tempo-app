@@ -84,7 +84,16 @@ Ce qui n'est pas encore tranché, pour ne pas le redécouvrir :
   larges à dessein : un faux « hors service » sur un site qui marche coûte plus cher
   que le silence, parce qu'on cesse de croire le témoin. `export_static.py` imprime le
   retard réel de chaque source à **chaque passage** : au bout de quelques semaines, ces
-  chiffres diront s'il faut resserrer.
+  chiffres diront s'il faut resserrer. Le chiffre à surveiller en premier est celui
+  d'**ERA5** : sa requête est désormais filtrée sur `source = 'era5'`, et son décalage
+  normal (six jours, `run_date - 6`) n'a encore jamais été observé en vrai — il l'a
+  toujours été à travers la prévision, qui masquait tout.
+
+  **Chaque ligne de `app.SOURCES` doit surveiller UNE étape de collecte**, d'où le
+  filtre sur `source`. La table `weather` est écrite par deux étapes qui posent toutes
+  deux des `lead = 0` : la réanalyse ERA5, et la prévision qui comble les jours récents
+  qu'ERA5 n'a pas encore. Un contrôle sur le seul `lead` mesurait donc la seconde en
+  croyant surveiller la première.
 - **Question ouverte sur les indisponibilités RTE** : 70 % des paliers sont à la
   puissance installée entière, sans qu'on sache séparer « arrêt total publié » de
   « repli sur la puissance installée ». Borne haute du repli 70 %, borne basse 0 %.

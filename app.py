@@ -159,15 +159,25 @@ def changements(conn, run_date):
 # -- un passage du matin avant l'annonce RTE, un week-end de publication. Large
 # volontairement : un faux « hors service » sur un site qui marche coute plus cher que
 # le silence, parce qu'on cesse de croire l'indicateur.
+# Chaque ligne doit surveiller UNE etape de collecte, d'ou le filtre sur `source`.
+# Sans lui, « lead = 0 » melangeait deux ecritures : la reanalyse ERA5 et les jours
+# recents que la PREVISION range en lead 0 pour combler le retard d'ERA5
+# (`refresh_forecast_weather`). ERA5 pouvait donc mourir sans que le temoin bouge --
+# la prevision continuait de remplir la case et de le faire passer pour vivant.
+# Exactement la panne silencieuse que cet indicateur est cense empecher.
 SOURCES = [
     ("Couleurs officielles (RTE)",
      "SELECT MAX(date) FROM days WHERE color IS NOT NULL", 0, 1),
     ("Prévision météo",
-     "SELECT MAX(date) FROM weather WHERE lead > 0", config.MAX_HORIZON, 2),
+     "SELECT MAX(date) FROM weather WHERE lead > 0 AND source = 'forecast'",
+     config.MAX_HORIZON, 2),
+    # ERA5 est demandee jusqu'a `run_date - 6` (`refresh_observed_weather`) : six jours
+    # de retard sont son fonctionnement normal, pas une panne.
     ("Météo observée (ERA5)",
-     "SELECT MAX(date) FROM weather WHERE lead = 0", -6, 4),
+     "SELECT MAX(date) FROM weather WHERE lead = 0 AND source = 'era5'", -6, 4),
     ("Éolien / solaire",
-     "SELECT MAX(date) FROM renewables WHERE lead > 0", config.MAX_HORIZON, 2),
+     "SELECT MAX(date) FROM renewables WHERE lead > 0 AND source = 'forecast'",
+     config.MAX_HORIZON, 2),
     ("Consommation (eCO2mix)",
      "SELECT MAX(date) FROM conso", -1, 3),
     ("Indisponibilités (RTE)",
