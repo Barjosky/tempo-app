@@ -77,6 +77,14 @@ Ce qui n'est pas encore tranché, pour ne pas le redécouvrir :
   du tout, par construction (il part masqué et ne se montre qu'à l'image reçue).
   Ce n'est donc pas une panne à réparer dans l'urgence — juste un chiffre qui
   disparaît. Le remplaçant sérieux serait GoatCounter, qui demande une inscription.
+- **Les seuils de l'indicateur d'état des sources sont posés, pas mesurés.** Chaque
+  source est jugée sur la dernière date qu'elle **couvre** (et non sur l'instant du
+  dernier appel réussi : une source qui répond 200 à vide passerait pour vivante).
+  Les tolérances — 1 à 4 jours selon la source, dans `app.SOURCES` — ont été choisies
+  larges à dessein : un faux « hors service » sur un site qui marche coûte plus cher
+  que le silence, parce qu'on cesse de croire le témoin. `export_static.py` imprime le
+  retard réel de chaque source à **chaque passage** : au bout de quelques semaines, ces
+  chiffres diront s'il faut resserrer.
 - **Question ouverte sur les indisponibilités RTE** : 70 % des paliers sont à la
   puissance installée entière, sans qu'on sache séparer « arrêt total publié » de
   « repli sur la puissance installée ». Borne haute du repli 70 %, borne basse 0 %.

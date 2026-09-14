@@ -1011,3 +1011,36 @@ def test_une_source_optionnelle_qui_tombe_n_emporte_pas_le_passage():
         assert "ERA5" in collector._degradees[0] and "corps vide" in collector._degradees[0]
     finally:
         collector._degradees.clear()
+
+
+def test_l_etat_des_sources_distingue_retard_absence_et_avance():
+    """Le temoin doit dire trois choses differentes, sans jamais crier a tort.
+
+    Une source EN AVANCE (la prevision porte a J+10, les couleurs a J+1 apres
+    l'annonce RTE) n'est pas un probleme : un « -1 jour de retard » affiche ferait
+    douter de tout le reste, donc le retard est borne a zero. Une table VIDE n'est pas
+    une panne non plus -- c'est RTE sans cle, ou une base neuve.
+    """
+    import app as web
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    today = date(2026, 9, 14)
+    jour = lambda n: (today + timedelta(days=n)).isoformat()
+
+    conn.execute("INSERT INTO days VALUES (?,?,?,?,?,?,?)",
+                 (jour(1), "2026-2027", 1, 0, 0, "test", ""))   # en avance : RTE a annonce J+1
+    for n in range(1, 11):
+        conn.execute("INSERT INTO weather (date, lead) VALUES (?,?)", (jour(n), n))
+        conn.execute("INSERT INTO renewables (date, lead) VALUES (?,?)", (jour(n), n))
+    conn.execute("INSERT INTO weather (date, lead) VALUES (?,0)", (jour(-20),))  # ERA5 decroche
+    conn.execute("INSERT INTO conso (date) VALUES (?)", (jour(-1),))
+    conn.commit()
+
+    etats = {s["nom"]: s for s in web.sante_sources(conn, today)}
+    assert etats["Couleurs officielles (RTE)"]["retard"] == 0, "une avance n'est pas un retard"
+    assert etats["Prévision météo"]["etat"] == "ok"
+    assert etats["Météo observée (ERA5)"]["etat"] == "en retard"
+    # ERA5 est attendue a J-6 : vingt jours en arriere font quatorze jours de retard.
+    assert etats["Météo observée (ERA5)"]["retard"] == 14, etats["Météo observée (ERA5)"]
+    assert etats["Indisponibilités (RTE)"]["etat"] == "absente", "une table vide n'est pas une panne"
+    assert all(s["retard"] is None or s["retard"] >= 0 for s in etats.values())
