@@ -1030,9 +1030,13 @@ def test_l_etat_des_sources_distingue_retard_absence_et_avance():
     conn.execute("INSERT INTO days VALUES (?,?,?,?,?,?,?)",
                  (jour(1), "2026-2027", 1, 0, 0, "test", ""))   # en avance : RTE a annonce J+1
     for n in range(1, 11):
-        conn.execute("INSERT INTO weather (date, lead) VALUES (?,?)", (jour(n), n))
-        conn.execute("INSERT INTO renewables (date, lead) VALUES (?,?)", (jour(n), n))
-    conn.execute("INSERT INTO weather (date, lead) VALUES (?,0)", (jour(-20),))  # ERA5 decroche
+        conn.execute("INSERT INTO weather (date, lead, source) VALUES (?,?,'forecast')",
+                     (jour(n), n))
+        conn.execute("INSERT INTO renewables (date, lead, source) VALUES (?,?,'forecast')",
+                     (jour(n), n))
+    # ERA5 decroche. L'etiquette `source` compte : c'est elle qui la distingue des
+    # jours que la prevision range aussi en lead 0.
+    conn.execute("INSERT INTO weather (date, lead, source) VALUES (?,0,'era5')", (jour(-20),))
     conn.execute("INSERT INTO conso (date) VALUES (?)", (jour(-1),))
     conn.commit()
 
@@ -1044,3 +1048,39 @@ def test_l_etat_des_sources_distingue_retard_absence_et_avance():
     assert etats["Météo observée (ERA5)"]["retard"] == 14, etats["Météo observée (ERA5)"]
     assert etats["Indisponibilités (RTE)"]["etat"] == "absente", "une table vide n'est pas une panne"
     assert all(s["retard"] is None or s["retard"] >= 0 for s in etats.values())
+
+
+def test_era5_morte_est_vue_meme_si_la_prevision_comble_le_trou():
+    """La panne que le temoin laissait passer en croyant la surveiller.
+
+    `refresh_forecast_weather` range les jours recents en `lead = 0` pour combler le
+    retard d'ERA5. Un controle qui ne regardait que `lead = 0` mesurait donc la
+    PREVISION : ERA5 pouvait etre morte depuis des semaines, la case restait remplie
+    et le temoin au vert. C'est le filtre sur `source` qui les separe.
+
+    Le test pose exactement cette base : ERA5 arretee depuis longtemps, prevision qui
+    comble jusqu'a aujourd'hui. Le temoin doit voir la panne.
+    """
+    import app as web
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    today = date(2026, 9, 14)
+    jour = lambda n: (today + timedelta(days=n)).isoformat()
+
+    # ERA5 s'est arretee il y a trente jours.
+    conn.execute("INSERT INTO weather (date, lead, source) VALUES (?,0,'era5')", (jour(-30),))
+    # La prevision, elle, comble les jours recents en lead 0 -- et porte a J+10.
+    for n in range(-7, 1):
+        conn.execute("INSERT INTO weather (date, lead, source) VALUES (?,0,'forecast')", (jour(n),))
+    for n in range(1, 11):
+        conn.execute("INSERT INTO weather (date, lead, source) VALUES (?,?,'forecast')", (jour(n), n))
+    conn.commit()
+
+    etats = {s["nom"]: s for s in web.sante_sources(conn, today)}
+    era5 = etats["Météo observée (ERA5)"]
+    assert era5["couvre"] == jour(-30), f"c'est la prevision qui a ete mesuree : {era5}"
+    assert era5["etat"] == "en retard", era5
+    # Attendue a J-6, trouvee a J-30 : vingt-quatre jours de retard.
+    assert era5["retard"] == 24, era5
+    # La prevision, elle, va bien : le temoin ne doit pas accuser tout le monde.
+    assert etats["Prévision météo"]["etat"] == "ok", etats["Prévision météo"]
