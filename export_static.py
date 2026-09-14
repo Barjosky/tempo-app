@@ -98,6 +98,26 @@ def sante_indisponibilites():
           f"{part:.0%} a la puissance installee entiere, {r['sans_mw'] or 0} sans puissance")
 
 
+def etat_des_sources():
+    """Le meme tableau que la page, dans les logs du passage.
+
+    La page ne crie qu'au-dela d'une tolerance ; les logs, eux, montrent le retard
+    REEL de chaque source a chaque passage. C'est ce qui permet de resserrer un seuil
+    sur des chiffres plutot que de le deviner -- et de voir une source deriver avant
+    qu'elle ne franchisse le seuil.
+    """
+    from app import sante_sources
+    conn = db.connect()
+    print("\nEtat des sources :")
+    for s in sante_sources(conn):
+        if s["etat"] == "absente":
+            print(f"  absente | {s['nom']} — aucune donnee (source non configuree ?)")
+            continue
+        marque = "ok     " if s["etat"] == "ok" else "RETARD "
+        print(f"  {marque}| {s['nom']} — couvre jusqu'au {s['couvre']}, "
+              f"retard {s['retard']} j (tolerance {s['tolerance']})")
+
+
 def main():
     # On ne vide que les JSON : le dossier peut contenir autre chose (sur le depot
     # publie, il est a la racine du site).
@@ -132,6 +152,7 @@ def main():
         "periods": config.PERIODS,
     }), encoding="utf-8")
 
+    etat_des_sources()
     sante_indisponibilites()
 
     files = len(list(OUT.glob("*.json")))

@@ -273,6 +273,55 @@ function renderAlert(days) {
     </div>`;
 }
 
+/* ---------- etat des sources ----------
+   Une prevision est aussi fraiche que ses entrees, et rien ne le disait. Le 14
+   septembre 2026, une source est tombee sans que la page ait le moindre moyen de le
+   montrer : elle affichait des couleurs avec le meme aplomb qu'un jour ordinaire.
+
+   Deux niveaux, a la mesure de l'enjeu :
+     - en PERMANENCE, une ligne sobre en pied de page. Un indicateur qui n'apparait
+       qu'en cas de panne ne se distingue pas d'un indicateur casse : le lecteur ne
+       peut pas savoir si tout va bien ou si le controle lui-meme est mort ;
+     - EN HAUT et en ambre, seulement quand une source decroche vraiment -- la ou le
+       lecteur decide, pas en bas de page ou il n'ira pas.
+
+   Une source « absente » n'est pas en panne : c'est RTE sans cle, ou une base neuve.
+   On le dit sans crier. */
+function renderSources(sources) {
+  const pied = document.getElementById("sources-pied");
+  const haut = document.getElementById("sources-alerte");
+  if (!pied || !haut) return;
+  // Un export anterieur a cet ajout n'a pas le champ : se taire vaut mieux que
+  // d'affirmer que tout va bien sans l'avoir verifie.
+  if (!Array.isArray(sources) || !sources.length) {
+    pied.hidden = true;
+    haut.innerHTML = "";
+    return;
+  }
+  const retard = sources.filter((s) => s.etat === "en retard");
+  const absentes = sources.filter((s) => s.etat === "absente");
+  const jour = sources.length - retard.length - absentes.length;
+
+  const bouts = [`<b>${jour}</b> à jour`];
+  if (retard.length) bouts.push(`<b class="ko">${retard.length} en retard</b>`);
+  if (absentes.length) bouts.push(`${absentes.length} non configurée${absentes.length > 1 ? "s" : ""}`);
+  pied.hidden = false;
+  pied.className = "sources" + (retard.length ? " is-ko" : "");
+  // Le texte tient dans UN enfant : en `inline-flex`, le `gap` separe chaque noeud,
+  // et la phrase laissee a nu se retrouvait ecartelee -- « 2 en retard . ».
+  pied.innerHTML = `<span class="pastille" aria-hidden="true"></span><span>Sources de données — ${bouts.join(", ")}.</span>`;
+
+  if (!retard.length) { haut.innerHTML = ""; return; }
+  const jours = (n) => `${n} jour${n > 1 ? "s" : ""}`;
+  haut.innerHTML = `<div class="degrade">
+      <span class="degrade-mark" aria-hidden="true"></span>
+      <div><strong>Données incomplètes.</strong>
+        ${retard.map((s) => `${s.nom} accuse <b>${jours(s.retard)}</b> de retard
+           (couvre jusqu'au ${s.couvre})`).join(" · ")}.
+        La prévision reste calculée, mais sur des entrées vieillissantes.</div>
+    </div>`;
+}
+
 /* La FORME des dix jours, d'un seul coup d'oeil.
 
    Onze cartes empilees ne se resument pas : sur un telephone on en voit une et demie,
@@ -344,6 +393,11 @@ async function loadForecast() {
     fillGauge("blanc", s.blanc_used, s.quota_blanc || 43);
     fillGauge("rouge", s.rouge_used, s.quota_rouge || 22);
   }
+
+  // AVANT le depart anticipe ci-dessous : une page sans aucune prediction est
+  // precisement celle ou l'etat des sources explique tout, et c'est la qu'il
+  // disparaissait.
+  renderSources(data.sources);
 
   const box = document.getElementById("days");
   if (!data.days.length) {

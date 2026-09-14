@@ -148,6 +148,64 @@ def changements(conn, run_date):
     return {r["target_date"]: r["predicted_color"] for r in rows}, veille
 
 
+# Chaque source est jugee sur la DERNIERE DATE QU'ELLE COUVRE, pas sur l'instant du
+# dernier appel reussi. Une source qui repond 200 avec une charge utile vide passerait
+# pour vivante au `fetched_at` alors qu'elle n'apporte plus rien depuis des semaines ;
+# sa couverture, elle, cesse d'avancer dans les deux cas.
+#
+# `attendu` est le decalage NORMAL de la source, en jours : negatif pour celles qui
+# regardent le passe (ERA5 arrive avec six jours de retard par construction), positif
+# pour celles qui portent sur l'avenir. `tolerance` absorbe le fonctionnement ordinaire
+# -- un passage du matin avant l'annonce RTE, un week-end de publication. Large
+# volontairement : un faux « hors service » sur un site qui marche coute plus cher que
+# le silence, parce qu'on cesse de croire l'indicateur.
+SOURCES = [
+    ("Couleurs officielles (RTE)",
+     "SELECT MAX(date) FROM days WHERE color IS NOT NULL", 0, 1),
+    ("Prévision météo",
+     "SELECT MAX(date) FROM weather WHERE lead > 0", config.MAX_HORIZON, 2),
+    ("Météo observée (ERA5)",
+     "SELECT MAX(date) FROM weather WHERE lead = 0", -6, 4),
+    ("Éolien / solaire",
+     "SELECT MAX(date) FROM renewables WHERE lead > 0", config.MAX_HORIZON, 2),
+    ("Consommation (eCO2mix)",
+     "SELECT MAX(date) FROM conso", -1, 3),
+    ("Indisponibilités (RTE)",
+     "SELECT MAX(publication_date) FROM unavailabilities", -1, 4),
+]
+
+
+def sante_sources(conn, today=None):
+    """L'etat de chaque source, en une ligne chacune.
+
+    Rend `retard` = de combien de jours la couverture est EN DECA de ce qu'elle
+    devrait etre, jamais negatif : une source en avance n'est pas un probleme, et
+    afficher « -1 jour de retard » ferait douter du reste.
+
+    Une table absente ou vide n'est pas une panne : c'est une source non configuree
+    (RTE sans cle) ou une base neuve. On le dit, on ne crie pas.
+    """
+    today = today or date.today()
+    tables = {r["name"] for r in
+              conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    out = []
+    for nom, requete, attendu, tolerance in SOURCES:
+        table = requete.split(" FROM ")[1].split()[0]
+        couvre = None
+        if table in tables:
+            couvre = conn.execute(requete).fetchone()[0]
+        if not couvre:
+            out.append({"nom": nom, "couvre": None, "retard": None,
+                        "tolerance": tolerance, "etat": "absente"})
+            continue
+        retard = max(0, ((today + timedelta(days=attendu))
+                         - date.fromisoformat(couvre)).days)
+        out.append({"nom": nom, "couvre": couvre, "retard": retard,
+                    "tolerance": tolerance,
+                    "etat": "ok" if retard <= tolerance else "en retard"})
+    return out
+
+
 def tariff_payload():
     """Grille tarifaire servie a la page, pour afficher le prix de chaque journee."""
     return {
@@ -224,6 +282,7 @@ def forecast():
                     "season": season_summary(conn), "tariffs": tariff_payload(),
                     "schedules_utc": config.SCHEDULES_UTC,
                     "fiabilite": fiabilite_par_horizon(conn),
+                    "sources": sante_sources(conn),
                     "cadence": cadence.observee(
                         cadence.avec_amorce(db.passages_reguliers(conn))),
                     "derniere_maj": dernier_passage(conn)})

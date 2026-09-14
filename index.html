@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=f3ddfdc9">
+<link rel="stylesheet" href="styles.css?v=c160d9ef">
 </head>
 <body>
 <div class="grain" aria-hidden="true"></div>
@@ -78,6 +78,7 @@
     </aside>
 
     <div class="forecast-main">
+      <div id="sources-alerte"></div>
       <div id="alert-strip"></div>
       <div class="ruban" id="ruban" role="group" aria-label="Aperçu des dix jours"></div>
       <div class="days" id="days"></div>
@@ -160,6 +161,7 @@
      le pied de page est sous la ligne de flottaison, et une image differee ne se
      chargerait jamais chez qui ne fait pas defiler -- le compteur sous-compterait. -->
 <footer class="pied">
+  <p class="sources" id="sources-pied" hidden></p>
   <p class="compteur" id="compteur" hidden>
     <img id="compteur-img" alt="Nombre de visites" referrerpolicy="no-referrer"
          src="https://hits.sh/barjosky.github.io/tempo-app.svg?style=flat-square&label=visites&labelColor=141a23&color=25405e">
@@ -167,6 +169,6 @@
   </p>
 </footer>
 
-<script src="app.js?v=8d1b7f2e"></script>
+<script src="app.js?v=83f2d29c"></script>
 </body>
 </html>
