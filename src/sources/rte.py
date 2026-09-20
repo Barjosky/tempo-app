@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import config
+from src import reseau
 
 TOKEN_URL = "https://digital.iservices.rte-france.com/token/oauth/"
 BASE = ("https://digital.iservices.rte-france.com"
@@ -92,34 +93,37 @@ def jeton():
     return _jeton["valeur"]
 
 
-def _get(chemin, params, retries=3):
+def _get(chemin, params):
     """Une page de resultats. Rend (donnees, jeton_de_continuation)."""
     # `_suite` est interne : RTE attend le jeton de continuation dans un EN-TETE, et
     # refuse tout parametre de requete qu'il ne connait pas.
     qs = urllib.parse.urlencode({k: v for k, v in params.items()
                                  if v is not None and not k.startswith("_")})
-    for essai in range(retries):
+    cible = f"{BASE}{chemin}?{qs}"
+
+    def tentative():
+        entetes = {"Authorization": f"Bearer {jeton()}",
+                   "Accept": "application/json"}
+        if params.get("_suite"):
+            entetes["continuation_token"] = params["_suite"]
+        req = urllib.request.Request(cible, headers=entetes)
         try:
-            entetes = {"Authorization": f"Bearer {jeton()}",
-                       "Accept": "application/json"}
-            if params.get("_suite"):
-                entetes["continuation_token"] = params["_suite"]
-            req = urllib.request.Request(f"{BASE}{chemin}?{qs}", headers=entetes)
             with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
                 return json.loads(r.read().decode()), r.headers.get("continuation_token")
         except urllib.error.HTTPError as e:
-            # 429 : quota par seconde depasse. Les autres codes ne s'arrangeront pas
-            # en reessayant -- on les laisse remonter pour qu'ils soient visibles.
-            if e.code != 429 or essai == retries - 1:
-                # RTE explique ses refus dans le CORPS de la reponse. Le laisser
-                # tomber pour ne garder que « 400 » revient a jeter le diagnostic et
-                # a deviner ensuite : l'erreur remonte donc avec son explication.
-                raise ErreurRTE(e.code, _corps(e), f"{BASE}{chemin}?{qs}") from None
-            time.sleep(5 * (essai + 1))
-        except Exception:
-            if essai == retries - 1:
-                raise
-            time.sleep(3 * (essai + 1))
+            # RTE explique ses refus dans le CORPS de la reponse. Le laisser tomber
+            # pour ne garder que « 400 » revient a jeter le diagnostic et a deviner
+            # ensuite : l'erreur remonte donc avec son explication.
+            raise ErreurRTE(e.code, _corps(e), cible) from None
+
+    def transitoire(exc):
+        # 429 : quota par seconde depasse, et 5xx : panne de leur cote. Les autres
+        # codes viennent de la demande et ne s'arrangeront pas en attendant.
+        if isinstance(exc, ErreurRTE):
+            return reseau.transitoire_http(exc.code)
+        return reseau.transitoire_reseau(exc)
+
+    return reseau.reessayer(tentative, transitoire)
 
 
 def _horodatage(x):

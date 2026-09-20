@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import config
+from src import reseau
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 PREVIOUS_RUNS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
@@ -37,10 +38,17 @@ class ErreurMeteo(Exception):
     Meme lecon que pour RTE (`ErreurRTE`), qui explique ses refus dans le CORPS de la
     reponse : jeter le corps pour ne garder que le type de l'erreur revient a jeter le
     diagnostic et a deviner ensuite.
+
+    `transitoire` est pose A LA SOURCE, la ou on sait ce que l'erreur veut dire. Deux
+    refus peuvent porter le meme code 200 et ne rien avoir en commun : un corps vide
+    (coupure d'un intermediaire, page de maintenance) passera tout seul, tandis qu'un
+    `{"error": true}` d'Open-Meteo dit que la demande est fausse et le redira toujours.
+    Le deviner plus tard, depuis le seul code, reviendrait a jeter ce qu'on savait.
     """
 
-    def __init__(self, url, code, corps):
+    def __init__(self, url, code, corps, transitoire=False):
         self.url, self.code, self.corps = url, code, corps
+        self.transitoire = transitoire
         super().__init__(f"HTTP {code} sur {url} — {corps}")
 
 
@@ -63,29 +71,30 @@ def _tentative(req, cible):
             corps = _extrait(e.read())
         except Exception:
             corps = "(corps illisible)"
-        raise ErreurMeteo(cible, e.code, corps) from None
+        raise ErreurMeteo(cible, e.code, corps,
+                          reseau.transitoire_http(e.code)) from None
     try:
         data = json.loads(brut.decode("utf-8"))
     except ValueError:
-        # Un 200 qui ne porte pas de JSON : c'est ce cas-la qui a tue la collecte, et
-        # c'est le corps -- lui seul -- qui dit pourquoi.
-        raise ErreurMeteo(cible, code, _extrait(brut)) from None
+        # Un 200 qui ne porte pas de JSON : c'est ce cas-la qui a tue la collecte du
+        # 14 septembre, et c'est le corps -- lui seul -- qui dit pourquoi. Transitoire :
+        # le passage suivant est passe sans rien changer au code.
+        raise ErreurMeteo(cible, code, _extrait(brut), transitoire=True) from None
     if data.get("error"):
+        # Open-Meteo refuse la demande elle-meme : insister ne la rendra pas valide.
         raise ErreurMeteo(cible, code, str(data.get("reason")))
     return data
 
 
-def _get(url, params, retries=3):
+def _transitoire(exc):
+    return reseau.transitoire_reseau(exc) or getattr(exc, "transitoire", False)
+
+
+def _get(url, params):
     qs = urllib.parse.urlencode(params)
     cible = f"{url}?{qs}"
     req = urllib.request.Request(cible, headers={"User-Agent": "tempo-predictor/1.0"})
-    for attempt in range(retries):
-        try:
-            return _tentative(req, cible)
-        except Exception:
-            if attempt == retries - 1:
-                raise
-            time.sleep(3 * (attempt + 1))
+    return reseau.reessayer(lambda: _tentative(req, cible), _transitoire)
 
 
 def _blend(per_city):

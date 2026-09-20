@@ -694,6 +694,48 @@ semaines, et de l'extérieur les deux se ressemblent. La panne est consignée da
 `.degradations`, et l'atelier rougit le passage **après** la publication : la page est
 fraîche *et* l'alarme est visible.
 
+## Neuf secondes de patience pour des coupures de plusieurs minutes (20 septembre 2026)
+
+Run 61 : `TimeoutError: _ssl.c:993: The handshake operation timed out` vers
+`api.open-meteo.com`, dans `fetch_forecast`. La prévision météo étant **bloquante**
+— c'est elle qui alimente la prédiction du jour — le passage est mort, comme prévu.
+Le passage suivant, 2 h 38 plus tard, est passé sans rien changer : coupure passagère.
+
+**Le motif, lui, n'est pas passager :**
+
+| | |
+|---|---|
+| Passages depuis le début | 62 |
+| Échecs | **2** (3 %) |
+| Dont chez Open-Meteo | **2** (100 %) |
+| 14 sept. | corps vide sur l'archive ERA5 |
+| 20 sept. | poignée de main TLS expirée sur la prévision |
+
+Les trois clients HTTP du projet réessayaient alors **3 fois en attendant 3 s puis
+6 s**, soit **9 secondes de patience** — quand chaque tentative brûle 60 s de timeout.
+Le run 61 a passé 5 minutes à échouer, dont 9 secondes seulement à attendre que ça
+revienne. Une coupure de plus de dix secondes n'était couverte par rien.
+
+Second défaut du même code : il réessayait **n'importe quelle** exception. Un HTTP 400
+était retenté trois fois alors qu'il ne s'arrangera jamais, retardant le diagnostic
+sans rien sauver.
+
+`src/reseau.py` sépare donc deux questions qui n'ont rien à voir :
+
+- **est-ce transitoire ?** — coupure, TLS, 5xx, 429 : oui ; 4xx : non. Chaque client
+  classe *ses* erreurs, parce que lui seul sait ce qu'elles veulent dire. Deux refus
+  peuvent porter le même code 200 sans rien avoir en commun : un corps vide passera
+  tout seul, un `{"error": true}` d'Open-Meteo jamais ;
+- **combien de temps insister ?** — un **budget** de 120 s, pas un nombre de
+  tentatives. Compter les tentatives ne dit rien du temps réellement passé à attendre,
+  qui est la seule chose qui compte face à une coupure : c'est elle qu'on enjambe.
+  Attentes 5, 15, 30, 60 → fenêtre de 110 s.
+
+**Ce qui reste inconnu** : la durée réelle de la coupure du 20. On sait seulement
+qu'elle était finie 2 h 38 plus tard. 110 s de patience couvrent une classe de pannes
+que l'ancien code ne couvrait pas du tout ; rien ne prouve qu'elles auraient suffi
+ce jour-là.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
