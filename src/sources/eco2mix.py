@@ -9,6 +9,7 @@ L'agregation journaliere est faite cote serveur pour ne pas rapatrier 500 000 li
 import json
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -16,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import config
+from src import reseau
 
 BASE = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets"
 CONSOLIDE = "eco2mix-national-cons-def"
@@ -31,18 +33,21 @@ DAILY_SELECT = ("max(consommation) as peak, avg(consommation) as moyenne, "
                 "max(nucleaire) as nucleaire")
 
 
-def _get(dataset, params, retries=3):
+def _get(dataset, params):
     qs = urllib.parse.urlencode(params)
     req = urllib.request.Request(f"{BASE}/{dataset}/records?{qs}",
                                  headers={"User-Agent": "tempo-predictor/1.0"})
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
-                return json.loads(r.read().decode())
-        except Exception:
-            if attempt == retries - 1:
-                raise
-            time.sleep(3 * (attempt + 1))
+
+    def tentative():
+        with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
+            return json.loads(r.read().decode())
+
+    def transitoire(exc):
+        if isinstance(exc, urllib.error.HTTPError):
+            return reseau.transitoire_http(exc.code)
+        return reseau.transitoire_reseau(exc)
+
+    return reseau.reessayer(tentative, transitoire)
 
 
 def fetch_daily(dataset, start, end):

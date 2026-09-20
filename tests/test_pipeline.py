@@ -597,16 +597,21 @@ def test_le_jeton_de_continuation_ne_part_pas_en_parametre():
     rte.urllib.request.urlopen = faux_urlopen
     rte._jeton["valeur"], rte._jeton["expire"] = "factice", 9e18
     try:
+        # `RuntimeError` n'est pas transitoire : `_get` renonce sans attendre, et le
+        # test reste instantane. On n'avale que CETTE erreur-la : un `except
+        # Exception` nu laissait passer une signature devenue fausse, et le test
+        # aurait continue a reussir en n'appelant plus rien du tout.
         try:
             rte._get("/generation_unavailabilities",
-                     {"start_date": "x", "_suite": "JETON-INTERNE"}, retries=1)
-        except Exception:
+                     {"start_date": "x", "_suite": "JETON-INTERNE"})
+        except RuntimeError:
             pass
     finally:
         rte.urllib.request.urlopen = original
         rte._jeton["valeur"], rte._jeton["expire"] = None, 0.0
-    assert "JETON-INTERNE" not in vus.get("url", ""), (
-        f"le jeton de continuation a fuite dans l'URL : {vus.get('url')}")
+    assert "url" in vus, "l'appel n'a pas eu lieu : le test ne verifiait plus rien"
+    assert "JETON-INTERNE" not in vus["url"], (
+        f"le jeton de continuation a fuite dans l'URL : {vus['url']}")
 
 
 def test_la_fenetre_de_publication_ne_va_jamais_dans_le_futur():
@@ -977,10 +982,14 @@ def test_une_reponse_sans_json_dit_ce_qu_elle_contenait():
     corriger quelque chose -- donc impossible de decider quoi que ce soit.
     """
     from src.sources import meteo
-    vrai_urlopen, vrai_sleep = meteo.urllib.request.urlopen, meteo.time.sleep
+    # L'attente se fait desormais dans `src.reseau`, plus dans `meteo` : neutraliser
+    # `meteo.time.sleep` ne servait plus a rien et le test attendait reellement les
+    # 110 s du budget. Un test lent est un test qu'on finit par desactiver.
+    from src import reseau
+    vrai_urlopen, vrai_sleep = meteo.urllib.request.urlopen, reseau.time.sleep
     meteo.urllib.request.urlopen = lambda *a, **k: _Reponse(
         b"<html><title>502 Bad Gateway</title></html>", 200)
-    meteo.time.sleep = lambda _: None
+    reseau.time.sleep = lambda _: None
     try:
         meteo._get(meteo.ARCHIVE_URL, {"latitude": 48.8})
         raise AssertionError("une reponse non-JSON doit lever")
@@ -989,7 +998,7 @@ def test_une_reponse_sans_json_dit_ce_qu_elle_contenait():
         assert "archive-api" in e.url, e.url
         assert e.code == 200, e.code
     finally:
-        meteo.urllib.request.urlopen, meteo.time.sleep = vrai_urlopen, vrai_sleep
+        meteo.urllib.request.urlopen, reseau.time.sleep = vrai_urlopen, vrai_sleep
 
 
 def test_une_source_optionnelle_qui_tombe_n_emporte_pas_le_passage():
@@ -1084,3 +1093,79 @@ def test_era5_morte_est_vue_meme_si_la_prevision_comble_le_trou():
     assert era5["retard"] == 24, era5
     # La prevision, elle, va bien : le temoin ne doit pas accuser tout le monde.
     assert etats["Prévision météo"]["etat"] == "ok", etats["Prévision météo"]
+
+
+def test_une_erreur_definitive_n_est_pas_reessayee():
+    """Un 400 ne s'arrangera pas en attendant : insister retarde le diagnostic.
+
+    L'ancien code reessayait N'IMPORTE QUELLE exception trois fois. Une requete
+    malformee coutait donc trois appels et neuf secondes avant de dire ce qu'elle
+    avait toujours su.
+    """
+    from src import reseau
+    essais = []
+
+    def tentative():
+        essais.append(1)
+        raise ValueError("requete malformee")
+
+    try:
+        reseau.reessayer(tentative, lambda exc: False, dormir=lambda _: None)
+        raise AssertionError("l'erreur definitive doit remonter")
+    except ValueError:
+        pass
+    assert len(essais) == 1, f"{len(essais)} tentatives pour une erreur definitive"
+
+
+def test_une_coupure_reseau_est_enjambee():
+    """La panne du 20 septembre : une poignee de main TLS qui expire.
+
+    Neuf secondes de patience ne suffisaient pas. Le budget en offre cent dix, ce qui
+    couvre une coupure de cet ordre -- et s'arrete net au-dela, parce qu'une panne
+    plus longue est une vraie panne que le passage doit signaler.
+    """
+    import urllib.error
+    from src import reseau
+    dodos, essais = [], []
+
+    def tentative():
+        essais.append(1)
+        if len(essais) < 3:
+            raise urllib.error.URLError(
+                TimeoutError("_ssl.c:993: The handshake operation timed out"))
+        return "ok"
+
+    assert reseau.reessayer(tentative, reseau.transitoire_reseau,
+                            dormir=dodos.append) == "ok"
+    assert len(essais) == 3, essais
+    assert dodos == [5, 15], f"attentes croissantes attendues, obtenu {dodos}"
+
+
+def test_un_400_ne_passe_pas_pour_une_panne_reseau():
+    """`HTTPError` HERITE de `URLError` : le piege est de le classer comme un tuyau.
+
+    Sans cette distinction, un refus du serveur -- « votre date est invalide » --
+    serait reessaye comme une coupure, et le message qui explique tout arriverait
+    deux minutes plus tard.
+    """
+    import urllib.error
+    from src import reseau
+    quatre_cents = urllib.error.HTTPError("http://x", 400, "Bad Request", {}, None)
+    coupure = urllib.error.URLError(TimeoutError("handshake"))
+    assert reseau.transitoire_reseau(quatre_cents) is False
+    assert reseau.transitoire_reseau(coupure) is True
+    assert reseau.transitoire_http(429) and reseau.transitoire_http(503)
+    assert not reseau.transitoire_http(400) and not reseau.transitoire_http(404)
+
+
+def test_le_budget_arrete_une_panne_qui_dure():
+    """Insister indefiniment immobiliserait le passage au lieu de le faire echouer."""
+    from src import reseau
+    dodos = []
+    try:
+        reseau.reessayer(lambda: (_ for _ in ()).throw(TimeoutError("toujours la")),
+                         lambda exc: True, budget=20, dormir=dodos.append)
+        raise AssertionError("le budget doit finir par laisser l'erreur sortir")
+    except TimeoutError:
+        pass
+    assert sum(dodos) <= 20, f"{sum(dodos)} s attendues pour un budget de 20"
