@@ -132,4 +132,5 @@ chaque fois qu'un garde-fou a demandé de « penser à » incrémenter un numér
 option ou recopier une valeur, il a fini par laisser passer la panne qu'il devait
 empêcher. Les garde-fous de ce dépôt se déclenchent donc **tout seuls** : empreinte des
 attributs du modèle, signature du cache de probabilités, empreinte des assets, test qui
-relit le `cron` du workflow.
+relit le `cron` du workflow, test qui retrouve chaque client HTTP de `src/` et exige
+qu'il passe par `reseau.reessayer` (le cinquième oubli : `tempo_api.py`, le 24 septembre).
