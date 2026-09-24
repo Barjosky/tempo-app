@@ -1,21 +1,39 @@
 """Couleurs Tempo officielles via api-couleur-tempo.fr (gratuite, sans cle)."""
 import json
 import sys
+import urllib.error
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import config
+from src import reseau
 from src.sources import calendrier
 
 BASE = "https://www.api-couleur-tempo.fr/api"
 
 
 def _get(url):
+    """Le quatrieme client HTTP du projet, oublie lors du correctif du 20 septembre.
+
+    Il n'avait AUCUN reessai : le 24 septembre, une alerte TLS du serveur
+    (`TLSV1_ALERT_INTERNAL_ERROR`) a tue le passage en une seconde et demie. Le
+    correctif precedent annoncait « les trois clients » ; il y en avait quatre. D'ou
+    le test qui les retrouve lui-meme au lieu de compter sur la memoire.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "tempo-predictor/1.0"})
-    with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
-        return json.loads(r.read().decode())
+
+    def tentative():
+        with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
+            return json.loads(r.read().decode())
+
+    def transitoire(exc):
+        if isinstance(exc, urllib.error.HTTPError):
+            return reseau.transitoire_http(exc.code)
+        return reseau.transitoire_reseau(exc)
+
+    return reseau.reessayer(tentative, transitoire)
 
 
 def fetch_season(season):

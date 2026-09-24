@@ -736,6 +736,23 @@ qu'elle était finie 2 h 38 plus tard. 110 s de patience couvrent une classe de 
 que l'ancien code ne couvrait pas du tout ; rien ne prouve qu'elles auraient suffi
 ce jour-là.
 
+### Le quatrième client, oublié (24 septembre 2026)
+
+Run 74 : `TLSV1_ALERT_INTERNAL_ERROR` de `api-couleur-tempo.fr`, dans `tempo_api.py`.
+Mort en **1,5 seconde** : ce client n'avait **aucun** réessai. Le correctif du 20
+annonçait « les trois clients HTTP » — il y en avait **quatre**. L'oubli venait de
+la mémoire de celui qui corrigeait, exactement la leçon de ce dépôt.
+
+Correction : `tempo_api` passe par `reseau.reessayer`, et `ssl.SSLError` est classée
+transitoire (une alerte TLS en cours de lecture sort nue, sans l'enveloppe `URLError`).
+**Garde-fou** : `test_chaque_client_http_passe_par_le_reessai` retrouve lui-même
+chaque module de `src/` qui appelle `urlopen(` et exige qu'il passe par le réessai.
+Vérifié sur la version fautive : il attrape `tempo_api.py`, et lui seul.
+
+Bilan au 24 septembre : **3 échecs sur 74 passages**, tous réseau, chez deux
+fournisseurs différents — ce qui confirme que la cause est le trajet depuis le runner,
+pas un fournisseur.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

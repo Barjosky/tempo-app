@@ -1169,3 +1169,32 @@ def test_le_budget_arrete_une_panne_qui_dure():
     except TimeoutError:
         pass
     assert sum(dodos) <= 20, f"{sum(dodos)} s attendues pour un budget de 20"
+
+
+def test_chaque_client_http_passe_par_le_reessai():
+    """Le garde-fou qui aurait evite la panne du 24 septembre.
+
+    Le correctif du 20 annoncait « les trois clients HTTP » ; il y en avait QUATRE, et
+    `tempo_api.py`, oublie, a tue un passage quatre jours plus tard sur une alerte TLS.
+    L'oubli venait de la memoire de celui qui corrigeait -- la lecon que ce depot a
+    deja apprise quatre fois. Ce test retrouve lui-meme chaque module qui ouvre une
+    connexion, et exige qu'il passe par `reseau.reessayer`. Un cinquieme client ecrit
+    sans reessai fera echouer ce test le jour meme ou il est ajoute.
+    """
+    racine = Path(__file__).resolve().parents[1] / "src"
+    fautifs = []
+    for fichier in sorted(racine.rglob("*.py")):
+        texte = fichier.read_text(encoding="utf-8")
+        if "urlopen(" in texte and "reseau.reessayer" not in texte:
+            fautifs.append(str(fichier.relative_to(racine)))
+    assert not fautifs, f"client(s) HTTP sans reessai : {', '.join(fautifs)}"
+
+
+def test_une_alerte_tls_du_serveur_est_transitoire():
+    """La panne du 24 septembre, sous ses deux formes possibles."""
+    import ssl
+    import urllib.error
+    from src import reseau
+    alerte = ssl.SSLError("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
+    assert reseau.transitoire_reseau(urllib.error.URLError(alerte)), "enveloppee par urllib"
+    assert reseau.transitoire_reseau(alerte), "nue, pendant la lecture"

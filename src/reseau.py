@@ -67,11 +67,15 @@ def transitoire_reseau(exc):
     """
     import http.client
     import socket
+    import ssl
     import urllib.error
     if isinstance(exc, urllib.error.HTTPError):
         return False
+    # `ssl.SSLError` : urllib l'enveloppe dans un `URLError` pendant la connexion,
+    # mais une alerte TLS au milieu de la LECTURE sort nue. Le 24 septembre, c'etait
+    # `TLSV1_ALERT_INTERNAL_ERROR` -- une panne du serveur, pas de la demande.
     return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError,
-                            socket.timeout, http.client.HTTPException))
+                            socket.timeout, ssl.SSLError, http.client.HTTPException))
 
 
 def transitoire_http(code):
