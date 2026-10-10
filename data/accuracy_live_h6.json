@@ -1,1 +1,1 @@
-{"by_horizon":[{"accuracy":1.0,"horizon":6,"n":27,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":null,"rouge_total":0}],"confusion":[[27,0,0],[0,0,0],[0,0,0]],"n":27,"period":"all","reliability":[{"bin":"0%-10%","n":27,"observed":0.0,"predicted":0.0}]}
+{"by_horizon":[{"accuracy":1.0,"horizon":6,"n":28,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":null,"rouge_total":0}],"confusion":[[28,0,0],[0,0,0],[0,0,0]],"n":28,"period":"all","reliability":[{"bin":"0%-10%","n":28,"observed":0.0,"predicted":0.0}]}
