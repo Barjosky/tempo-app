@@ -132,7 +132,8 @@ def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
         X.append(row)
         meta.append({"target": target, "horizon": h,
                      "is_holiday": calendrier.is_holiday(target),
-                     "rouge_left": state["rouge_left"], "blanc_left": state["blanc_left"]})
+                     "rouge_left": state["rouge_left"], "blanc_left": state["blanc_left"],
+                     "rouge_par_mois": state["rouge_par_mois"]})
     if not X:
         return []
 
