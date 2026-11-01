@@ -1,1 +1,1 @@
-[]
+[{"actual":1,"actual_name":"Bleu","backtest":false,"correct":true,"horizon":7,"official":false,"p":[0.972251401903808,0.020709538431127397,0.0070390596650645],"predicted":1,"predicted_name":"Bleu","target_date":"2026-11-02"}]
