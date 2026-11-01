@@ -753,6 +753,42 @@ Bilan au 24 septembre : **3 échecs sur 74 passages**, tous réseau, chez deux
 fournisseurs différents — ce qui confirme que la cause est le trajet depuis le runner,
 pas un fournisseur.
 
+## Les nouvelles règles de tirage Rouge (délibération CRE n° 2026-189)
+
+Adoptée le 21 octobre 2026, applicable au **1er novembre 2026**. RTE tire désormais les
+Rouge selon la méthode des jours PP du mécanisme de capacité, dans un **tunnel** de
+cumuls mensuels autour d'une courbe guide. Le quota reste 300 / 43 / 22.
+
+**Ce qui est encodé** — uniquement ce que plusieurs sources rapportent à l'identique,
+et daté : les saisons passées restent jugées avec les règles de leur époque.
+
+| Règle | Où |
+|---|---|
+| 24 et 31 décembre exclus du Rouge (Blanc toujours possible) | `rouge_possible` + filtre SQL |
+| 3 Rouge au plus en novembre | `sous_plafond` (masque) |
+| Exactement 6 au 31 décembre : plafond… | `sous_plafond` (masque) |
+| … et plancher | `rouge_force` |
+| 2 au plus en mars, donc 20 au moins fin février | `sous_plafond` + `rouge_force` |
+
+**Ce qui ne l'est pas, volontairement :**
+
+- **Bornes de fin janvier** (7 à 13 selon une seule source) et **plafond de fin février**.
+  Une borne dure inventée interdirait au modèle une couleur que RTE peut tirer.
+- **Annonce à J-2** : à partir du 1er novembre 2027 seulement, selon la presse.
+
+**Le texte officiel n'a pas été lu.** Le PDF est sur `cre.fr`, que le réseau de
+l'environnement de développement bloque ; toutes les règles ci-dessus viennent de la
+presse spécialisée (Selectra, Enerzine, JeChange, Planet, calendrier-tempo.fr), qui
+concorde sur ces points et diverge ailleurs.
+
+**Le risque qui reste, et comment le voir.** Le modèle a appris l'ancien régime. D'après
+le tableau des taux de base plus haut (Rouge à 1 % des jours en novembre, 15 % en
+décembre), novembre-décembre portaient **≈ 5 Rouge** en moyenne. Le tunnel en impose
+**exactement 6**. Les règles dures n'agissent qu'aux bords — plafond atteint, ou plancher
+qui ne laisse plus de marge — pas sur la probabilité en temps ordinaire. Si le modèle
+sous-estime le Rouge de décembre, seul l'écart entre réussite **en temps réel** et
+**backtest** le montrera : c'est l'outil proposé en septembre et toujours pas construit.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

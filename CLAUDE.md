@@ -94,6 +94,12 @@ Ce qui n'est pas encore tranché, pour ne pas le redécouvrir :
   deux des `lead = 0` : la réanalyse ERA5, et la prévision qui comble les jours récents
   qu'ERA5 n'a pas encore. Un contrôle sur le seul `lead` mesurait donc la seconde en
   croyant surveiller la première.
+- **Règles de tirage Rouge depuis le 1er novembre 2026 (CRE 2026-189) : partiellement
+  encodées.** Dans `src/rules.py`, datées pour ne pas toucher l'historique : 24/31
+  décembre exclus, novembre ≤ 3, exactement 6 au 31 décembre, mars ≤ 2. **Manquent** les
+  bornes de fin janvier et de fin février (une seule source) — à ajouter une fois le PDF
+  de la CRE lu, ce qui demande d'autoriser `cre.fr` dans le réseau de l'environnement.
+  Le modèle a appris l'ancien régime ; le suivi temps réel / backtest devient pressant.
 - **Question ouverte sur les indisponibilités RTE** : 70 % des paliers sont à la
   puissance installée entière, sans qu'on sache séparer « arrêt total publié » de
   « repli sur la puissance installée ». Borne haute du repli 70 %, borne basse 0 %.

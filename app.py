@@ -57,6 +57,12 @@ def period_clause(period):
     clause = f" AND CAST(strftime('%m', p.target_date) AS INTEGER) IN ({ROUGE_MONTHS_SQL})"
     if period == "eligibles":
         clause += " AND d.weekday < 5 AND d.is_holiday = 0"
+        # Deliberation CRE 2026-189 : les 24 et 31 decembre ne peuvent plus etre Rouge
+        # a partir du 1er novembre 2026. Meme regle, datee, que `rules.rouge_possible`
+        # -- sans elle, la page noterait le modele sur deux jours ou il n'a pas le
+        # choix, et son pourcentage cesserait d'etre celui du backtest.
+        clause += (f" AND NOT (p.target_date >= '{rules.REGLES_CRE_2026.isoformat()}'"
+                   " AND strftime('%m-%d', p.target_date) IN ('12-24', '12-31'))")
     return clause
 
 

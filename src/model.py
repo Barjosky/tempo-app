@@ -18,7 +18,8 @@ CLASSES = [config.BLEU, config.BLANC, config.ROUGE]
 def _mask_matrix(meta):
     """Masque des couleurs contractuellement possibles pour chaque ligne."""
     return np.array([
-        rules.allowed_mask(m["target"], m["is_holiday"], m["rouge_left"], m["blanc_left"])
+        rules.allowed_mask(m["target"], m["is_holiday"], m["rouge_left"], m["blanc_left"],
+                           m.get("rouge_par_mois"))
         for m in meta
     ], dtype=float)
 

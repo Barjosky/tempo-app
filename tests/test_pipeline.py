@@ -1198,3 +1198,78 @@ def test_une_alerte_tls_du_serveur_est_transitoire():
     alerte = ssl.SSLError("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
     assert reseau.transitoire_reseau(urllib.error.URLError(alerte)), "enveloppee par urllib"
     assert reseau.transitoire_reseau(alerte), "nue, pendant la lecture"
+
+
+# --- Deliberation CRE n°2026-189 (21 octobre 2026), applicable au 1er novembre 2026 ---
+
+def test_les_24_et_31_decembre_ne_sont_plus_rouges_depuis_2026():
+    """Retires du tirage Rouge, mais SEULEMENT a partir de la saison 2026-2027.
+
+    Les saisons passees ont ete tirees sous les anciennes regles : appliquer la
+    nouvelle a l'historique fausserait l'entrainement comme le backtest. Les quatre
+    dates testees sont des jours ouvres, non feries -- sinon le test passerait pour
+    une autre raison que celle qu'il pretend verifier.
+    """
+    from src import rules
+    assert rules.rouge_possible(date(2025, 12, 24)), "2025 : ancienne regle, Rouge possible"
+    assert rules.rouge_possible(date(2025, 12, 31)), "2025 : ancienne regle, Rouge possible"
+    assert not rules.rouge_possible(date(2026, 12, 24)), "2026 : retire du tirage"
+    assert not rules.rouge_possible(date(2026, 12, 31)), "2026 : retire du tirage"
+    # Blanc, lui, reste possible ces deux jours-la.
+    assert rules.blanc_possible(date(2026, 12, 24)) and rules.blanc_possible(date(2026, 12, 31))
+
+
+def test_le_tunnel_plafonne_novembre_decembre_et_mars():
+    """Trois Rouge au plus en novembre, six au plus au 31 decembre, deux en mars."""
+    from src import rules
+    vendredi_nov = date(2026, 11, 20)
+    assert rules.rouge_possible(vendredi_nov, rouge_par_mois={11: 2})
+    assert not rules.rouge_possible(vendredi_nov, rouge_par_mois={11: 3}), "plafond de novembre"
+
+    mardi_dec = date(2026, 12, 15)
+    assert rules.rouge_possible(mardi_dec, rouge_par_mois={11: 2, 12: 3})
+    assert not rules.rouge_possible(mardi_dec, rouge_par_mois={11: 2, 12: 4}), \
+        "six atteints : plus aucun Rouge avant janvier"
+
+    mercredi_mars = date(2027, 3, 10)
+    assert rules.rouge_possible(mercredi_mars, rouge_par_mois={3: 1})
+    assert not rules.rouge_possible(mercredi_mars, rouge_par_mois={3: 2}), "plafond de mars"
+
+    # L'hiver precedent n'etait soumis a aucun de ces plafonds.
+    assert rules.rouge_possible(date(2025, 11, 20), rouge_par_mois={11: 5})
+
+
+def test_le_plancher_du_31_decembre_force_les_derniers_jours():
+    """Six Rouge au 31 decembre : s'il en manque autant qu'il reste de jours, ils SONT Rouge.
+
+    A partir du mercredi 23 decembre 2026, les jours ou un Rouge reste possible avant
+    le 31 sont le 23, le 28, le 29 et le 30 : le 24 et le 31 sont retires du tirage, le
+    25 est ferie, le reste est un week-end. Quatre jours.
+    """
+    from src import rules
+    cible = date(2026, 12, 23)
+    assert rules.remaining_rouge_days(cible, date(2026, 12, 31)) == 4
+    # Deux deja tires : il en manque quatre pour quatre jours -> force.
+    assert rules.rouge_force(cible, rouge_left=config.QUOTA_ROUGE - 2)
+    # Trois deja tires : trois manquent pour quatre jours -> encore une marge.
+    assert not rules.rouge_force(cible, rouge_left=config.QUOTA_ROUGE - 3)
+    # Six deja tires : le plancher est atteint, rien a forcer.
+    assert not rules.rouge_force(cible, rouge_left=config.QUOTA_ROUGE - 6)
+    # La meme situation un an plus tot ne forcait rien : pas de plancher en 2025.
+    assert not rules.rouge_force(date(2025, 12, 23), rouge_left=config.QUOTA_ROUGE - 2)
+
+
+def test_un_rouge_force_par_le_plancher_ne_viole_pas_un_plafond():
+    """Le masque passe AVANT le forcage : un plafond atteint ne peut pas etre contredit.
+
+    Contraindre deux fois dans des sens opposes est le piege : `constrain` ne force
+    que la ou le Rouge reste possible apres masque, ce qui doit valoir aussi pour les
+    nouveaux plafonds -- sinon le modele imposerait un septieme Rouge en decembre.
+    """
+    import numpy as np
+    from src import model
+    meta = [{"target": date(2026, 12, 23), "is_holiday": False,
+             "rouge_left": config.QUOTA_ROUGE - 6, "blanc_left": 30,
+             "rouge_par_mois": {11: 3, 12: 3}}]
+    out = model.constrain(np.array([[0.2, 0.3, 0.5]]), meta, force_quota=True)
+    assert out[0][2] == 0.0, f"six Rouge deja tires, le septieme doit etre exclu : {out}"

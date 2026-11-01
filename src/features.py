@@ -435,6 +435,9 @@ class FeatureStore:
         rouge = blanc = 0
         last_rouge = last_blanc = None
         r7 = r14 = b7 = 0
+        # Par mois : le tunnel de la deliberation 2026-189 plafonne novembre et mars,
+        # ce que le seul total de saison ne permet pas de verifier.
+        rouge_par_mois = {}
         d = start
         while d <= run_date:
             info = self.days.get(d)
@@ -442,6 +445,7 @@ class FeatureStore:
                 delta = (run_date - d).days
                 if info["color"] == config.ROUGE:
                     rouge += 1
+                    rouge_par_mois[d.month] = rouge_par_mois.get(d.month, 0) + 1
                     last_rouge = d
                     r7 += delta < 7
                     r14 += delta < 14
@@ -455,6 +459,7 @@ class FeatureStore:
             "rouge_left": config.QUOTA_ROUGE - rouge, "blanc_left": config.QUOTA_BLANC - blanc,
             "last_rouge": last_rouge, "last_blanc": last_blanc,
             "rouge_last7": r7, "rouge_last14": r14, "blanc_last7": b7,
+            "rouge_par_mois": rouge_par_mois,
         }
         self._state_cache[run_date] = state
         return state
@@ -1020,5 +1025,6 @@ def build_dataset(store, start, end, horizons=range(1, config.MAX_HORIZON + 1), 
                 "season": info["season"], "weekday": target.weekday(),
                 "is_holiday": info["is_holiday"],
                 "rouge_left": state["rouge_left"], "blanc_left": state["blanc_left"],
+                "rouge_par_mois": state["rouge_par_mois"],
             })
     return np.array(X), np.array(y), meta
