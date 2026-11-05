@@ -598,3 +598,7 @@ table#history-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .compteur img { height: 20px; display: block; }
 .compteur small { color: var(--fg-dim); font-size: 11px; }
 @media (max-width: 1000px) { .pied { padding-left: 20px; padding-right: 20px; } }
+
+/* Second rendu, quand la couleur officielle arrive en direct : rejouer l'entree en
+   cascade ferait clignoter onze cartes pour en corriger une. */
+.days.sans-animation .day { animation: none; }

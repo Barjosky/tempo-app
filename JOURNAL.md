@@ -789,6 +789,35 @@ qui ne laisse plus de marge — pas sur la probabilité en temps ordinaire. Si l
 sous-estime le Rouge de décembre, seul l'écart entre réussite **en temps réel** et
 **backtest** le montrera : c'est l'outil proposé en septembre et toujours pas construit.
 
+## Huit heures de retard : la page ne connaissait plus « aujourd'hui » (5 novembre 2026)
+
+Départs réels des passages, du 1er au 4 novembre (heure de Paris, UTC+1) :
+
+| Cron demandé | Départs observés | Retard |
+|---|---|---|
+| 06:30 UTC (7h30) | 14h39, 15h29, 15h44 | **~8 h** |
+| 10:30 UTC (11h30) | 17h22, 18h56, 19h06 | ~6 h 30 |
+| 17:00 UTC (18h) | 21h57, 21h25, 23h12, 23h26 | ~4 h 30 |
+
+En septembre, le retard du premier créneau était de 4 h. Il a doublé.
+
+Deux défauts en découlaient, signalés par l'utilisateur le 5 novembre au matin :
+
+1. **La page datait tout depuis le dernier calcul.** De minuit au premier passage
+   (vers 15h30), la carte « auj. » montrait **hier**, et la couleur du jour se cachait
+   en « J+1 ». Corrigé côté page : c'est la date à Paris du lecteur qui décide, les
+   jours passés disparaissent. L'échéance du **calcul** est gardée à part : une
+   prévision faite hier à J+3 s'affiche en J+2 mais garde la fiabilité d'un J+3.
+2. **Le Blanc officiel du vendredi 6 n'apparaissait pas**, annoncé par RTE vers 10h40
+   mais collecté seulement à 15h30. La page demande désormais elle-même la couleur
+   d'aujourd'hui et de demain à `api-couleur-tempo.fr`, au chargement. Refus CORS ou
+   panne : elle garde ce qu'elle a, sans rien afficher de faux.
+
+**Non vérifié** : l'en-tête CORS de `api-couleur-tempo.fr`, que le réseau de
+l'environnement de développement ne laisse pas joindre. Le comportement est validé au
+rendu dans les deux cas — API qui répond, API injoignable — mais seul le site publié
+dira si le navigateur accepte l'appel.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

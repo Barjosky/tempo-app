@@ -173,14 +173,17 @@ function tariffBlock(color) {
    le serveur ne publie deja pas ces echeances-la. */
 function fiabiliteBlock(d) {
   if (!fiabilite || d.official || d.color === 1) return "";
-  const f = fiabilite[String(d.horizon)];
+  // A l'echeance ou la prevision a ete CALCULEE : elle peut differer de celle
+  // affichee quand le dernier calcul date de la veille.
+  const echeance = d.echeance ?? d.horizon;
+  const f = fiabilite[String(echeance)];
   const prec = f && f.precision[d.color];
   if (prec == null) return "";
   const part = fraction(prec);
   const dit = part
     ? `<b>${part[0]} annonce${part[0] > 1 ? "s" : ""} ${NAMES[d.color]} sur ${part[1]}</b> se confirment`
     : `<b>${pct(prec)}</b> des annonces ${NAMES[d.color]} se confirment`;
-  return `<p class="fiab" title="Mesuré sur ${f.annonces[d.color]} annonces ${NAMES[d.color]} à J+${d.horizon}, jours ouvrés de novembre à mars hors fériés.">À J+${d.horizon}, ${dit}.</p>`;
+  return `<p class="fiab" title="Mesuré sur ${f.annonces[d.color]} annonces ${NAMES[d.color]} à J+${echeance}, jours ouvrés de novembre à mars hors fériés.">À J+${echeance}, ${dit}.</p>`;
 }
 
 /* « 2 sur 3 » se lit d'un coup d'oeil la ou « 66 % » demande un effort. Encore
@@ -399,14 +402,104 @@ async function loadForecast() {
   // disparaissait.
   renderSources(data.sources);
 
+  const jours = recaler(data.days);
+  if (data.days.length && !jours.length) {
+    document.getElementById("days").innerHTML =
+      `<p class="empty">Toutes les prévisions disponibles sont passées : le dernier calcul
+       date du ${data.run_date}.</p>`;
+    return;
+  }
+  rendreJours(jours);
+  // Apres le premier rendu, jamais avant : la page s'affiche tout de suite avec ce
+  // qu'elle a, et se corrige si l'API officielle repond.
+  rafraichirOfficiel(jours);
+}
+
+/* ---------- le vrai « aujourd'hui » ----------
+   La page datait tout depuis le jour du DERNIER CALCUL. Or GitHub lance le premier
+   passage de la journee avec huit heures de retard (demande a 7h30, parti vers 15h30
+   debut novembre 2026) : de minuit a 15h30, la carte « auj. » montrait HIER, et la
+   couleur du jour se cachait en « J+1 ». C'est le calendrier du lecteur qui decide de
+   ce qu'est aujourd'hui, a Paris -- pas l'horloge du dernier passage. */
+function aujourdhuiParis() {
+  // `en-CA` formate en AAAA-MM-JJ, le format des dates du serveur : comparables tel quel.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(new Date());
+}
+
+function ecartJours(de, a) {
+  return Math.round((Date.parse(a + "T00:00:00Z") - Date.parse(de + "T00:00:00Z")) / 864e5);
+}
+
+/* Retire les jours passes et recompte l'echeance depuis aujourd'hui.
+
+   L'echeance d'AFFICHAGE (« J+1 ») et celle du CALCUL ne sont plus les memes : une
+   prevision faite hier a J+3 s'affiche aujourd'hui en J+2, mais sa fiabilite reste
+   celle d'une prevision a J+3 -- c'est a cette distance qu'elle a ete faite. D'ou
+   `echeance`, conservee a part pour `fiabiliteBlock`. */
+function recaler(days) {
+  const auj = aujourdhuiParis();
+  return days
+    .filter((d) => d.date >= auj)
+    .map((d) => ({ ...d, echeance: d.horizon, horizon: ecartJours(auj, d.date) }));
+}
+
+/* ---------- la couleur officielle, sans attendre GitHub ----------
+   RTE annonce le lendemain vers 10h40 ; le premier passage de GitHub n'arrive que
+   l'apres-midi. Entre les deux, la page affichait une PREDICTION pour une couleur deja
+   connue -- le 5 novembre 2026, le Blanc du vendredi n'apparaissait pas.
+
+   La page demande donc elle-meme les deux couleurs qui peuvent etre officielles,
+   aujourd'hui et demain, a la meme API que la collecte. Echec, refus CORS, reponse
+   illisible : on garde ce qu'on a, sans le dire, comme pour le compteur. Rien ne
+   s'affiche tant que la couleur n'est pas reellement recue. */
+const API_TEMPO = "https://www.api-couleur-tempo.fr/api/jourTempo/";
+
+async function couleurOfficielle(quand) {
+  const arret = new AbortController();
+  const minuteur = setTimeout(() => arret.abort(), 8000);
+  try {
+    const r = await fetch(API_TEMPO + quand, {
+      cache: "no-store", signal: arret.signal, referrerPolicy: "no-referrer",
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    // codeJour 0 : pas encore tiree. Ce n'est pas un Bleu.
+    if (!j || ![1, 2, 3].includes(j.codeJour) || typeof j.dateJour !== "string") return null;
+    return { date: j.dateJour.slice(0, 10), color: j.codeJour };
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(minuteur);
+  }
+}
+
+async function rafraichirOfficiel(jours) {
+  const recues = await Promise.all(["today", "tomorrow"].map(couleurOfficielle));
+  let corrige = false;
+  for (const o of recues) {
+    if (!o) continue;
+    const d = jours.find((x) => x.date === o.date);
+    if (!d || (d.official && d.color === o.color)) continue;
+    d.color = o.color;
+    d.color_name = NAMES[o.color];
+    d.official = true;
+    // RTE qui tranche n'est pas le modele qui change d'avis.
+    delete d.change;
+    corrige = true;
+  }
+  if (corrige) rendreJours(jours, false);
+}
+
+function rendreJours(days, anime = true) {
   const box = document.getElementById("days");
-  if (!data.days.length) {
+  if (!days.length) {
     box.innerHTML = '<p class="empty">Aucune pr\u00e9diction. Lancez <code>python collector.py --train</code>.</p>';
     return;
   }
-  renderAlert(data.days);
-  renderRuban(data.days);
-  box.innerHTML = data.days.map((d, i) => {
+  renderAlert(days);
+  renderRuban(days);
+  box.classList.toggle("sans-animation", !anime);
+  box.innerHTML = days.map((d, i) => {
     const f = fmtDate(d.date);
     const calme = estCalme(d);
     // La temperature explique la prevision : elle monte dans l'en-tete, au lieu
@@ -416,7 +509,10 @@ async function loadForecast() {
        <span class="t-range">${deg(d.tmin)} / ${deg(d.tmax)}</span>`;
     // Detailler « Bleu 100 % · Blanc 0 % · Rouge 0 % » n'apprend rien. La barre et
     // le detail n'apparaissent que s'il y a vraiment une hesitation a montrer.
-    const proba = (!d.p || calme) ? "" : `
+    // Un jour officiel n'a plus de probabilite : RTE a tranche. Les afficher posait
+    // « Blanc, officiel RTE » au-dessus d'un « Bleu 92 % » -- l'avis du modele d'avant
+    // l'annonce, qui contredisait l'etiquette.
+    const proba = (!d.p || calme || d.official) ? "" : `
         <div class="proba">
           <div class="pbar">
             <i class="b" style="width:${d.p[0] * 100}%"></i>
