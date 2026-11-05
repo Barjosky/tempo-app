@@ -512,6 +512,12 @@ function rendreJours(days, anime = true) {
     // Un jour officiel n'a plus de probabilite : RTE a tranche. Les afficher posait
     // « Blanc, officiel RTE » au-dessus d'un « Bleu 92 % » -- l'avis du modele d'avant
     // l'annonce, qui contredisait l'etiquette.
+    // Une carte calme garde ses chiffres, en une ligne et sans barre. Les masquer
+    // rendait le repli trop muet : on ne savait plus si « Bleu » voulait dire 95 % ou
+    // 80 %. La barre, elle, reste reservee aux jours ou il y a une hesitation a voir --
+    // c'est ce qui les fait ressortir.
+    const chiffres = (!d.p || d.official || !calme) ? "" : `
+        <p class="pmini"><span>Bleu ${pct(d.p[0])}</span><span>Blanc ${pct(d.p[1])}</span><span>Rouge ${pct(d.p[2])}</span></p>`;
     const proba = (!d.p || calme || d.official) ? "" : `
         <div class="proba">
           <div class="pbar">
@@ -539,7 +545,7 @@ function rendreJours(days, anime = true) {
         ${temp ? `<div class="temp">${temp}</div>` : ""}
         ${changeBlock(d)}
         ${tariffBlock(d.color)}
-        ${proba}
+        ${proba}${chiffres}
         ${fiabiliteBlock(d)}
       </article>`;
   }).join("");

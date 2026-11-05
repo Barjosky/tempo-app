@@ -347,6 +347,15 @@ main { padding: 28px 40px 72px; }
   font-family: var(--mono); font-size: 10.5px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 .pmeta .hot { color: var(--rouge); font-weight: 500; }
+/* La ligne des cartes calmes : lisible si on la cherche, sans rivaliser avec la barre
+   des jours a risque. */
+/* Chaque valeur reste d'un seul tenant, mais la ligne peut se replier : sur une carte
+   de telephone, « Rouge 0 % » sortait coupe en « Rou ». */
+.pmini {
+  margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 2px 10px;
+  font-family: var(--mono); font-size: 10px; color: var(--fg-dim); letter-spacing: .02em;
+}
+.pmini span { white-space: nowrap; }
 /* La temperature explique la prevision : elle se lit sous le verdict, pas en pied
    de carte en corps 12. */
 .temp { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
