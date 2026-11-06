@@ -828,3 +828,9 @@ function attachTips(box) {
 }
 
 loadForecast();
+
+/* Le service worker rend la page installable. Son absence (navigateur ancien, page
+   ouverte en fichier local) ne doit rien casser : la page marche sans lui. */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
