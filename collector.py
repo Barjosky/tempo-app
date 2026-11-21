@@ -45,6 +45,39 @@ def optionnelle(nom, fonction, *args):
         return None
 
 
+def collectee_aujourd_hui(conn, table, run_date):
+    """Lignes de prevision qu'un passage precedent a recuperees CE JOUR-CI."""
+    return conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE source = 'forecast' AND lead > 0"
+        " AND substr(fetched_at, 1, 10) = ?", (run_date.isoformat(),)).fetchone()[0]
+
+
+def ou_celle_du_jour(nom, table, fonction, conn, run_date):
+    """Collecte une prevision ; si la source refuse, reprend celle de ce jour-ci.
+
+    Open-Meteo plafonne son offre gratuite par adresse IP, et les runners GitHub
+    partagent les leurs : le dernier passage du jour trouve parfois le quota epuise
+    par d'autres (19, 20 et 21 novembre 2026). Le passage precedent du MEME jour a
+    pourtant collecte la meme prevision quelques heures plus tot : les echeances sont
+    comptees depuis la meme date, la reprendre ne decale rien. Recalculer avec reste
+    utile -- la couleur du lendemain a pu etre annoncee entre-temps.
+
+    Sans collecte du jour, en revanche, l'erreur remonte : la prevision de la veille
+    a ses echeances decalees d'un jour, et publier avec serait mentir sur la date.
+    Le repli n'est donc pas une panne a signaler en rouge -- la donnee est fraiche --
+    mais il laisse une annotation, pour qu'un repli quotidien ne passe pas inapercu.
+    """
+    try:
+        return fonction(conn, run_date)
+    except Exception as exc:
+        reprises = collectee_aujourd_hui(conn, table, run_date)
+        if not reprises:
+            raise
+        print(f"::warning::{nom} indisponible, reprise de la prevision collectee plus "
+              f"tot aujourd'hui ({reprises} echeances) — {exc}")
+        return reprises
+
+
 def chiffre(n):
     """« aucune » plutot que « None » : ces lignes se lisent en cherchant une panne."""
     return "aucune (source degradee)" if n is None else n
@@ -155,10 +188,12 @@ def main():
     # bloquante : sans elle on publierait les couleurs d'hier en les datant
     # d'aujourd'hui, ce qui est pire que ne pas publier.
     n_obs = optionnelle("meteo observee (ERA5)", refresh_observed_weather, conn, run_date)
-    n_fc = refresh_forecast_weather(conn, run_date)
+    n_fc = ou_celle_du_jour("prevision meteo", "weather", refresh_forecast_weather,
+                            conn, run_date)
     print(f"Meteo : {chiffre(n_obs)} jours observes ajoutes, {n_fc} echeances de prevision")
 
-    n_ren = optionnelle("eolien/solaire", refresh_renewables, conn, run_date)
+    n_ren = optionnelle("eolien/solaire", ou_celle_du_jour, "eolien/solaire", "renewables",
+                        refresh_renewables, conn, run_date)
     print(f"Eolien/solaire : {chiffre(n_ren)} echeances")
 
     n_conso = optionnelle("consommation (eCO2mix)", refresh_conso, conn, run_date)

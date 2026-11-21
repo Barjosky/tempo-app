@@ -62,6 +62,20 @@ def _extrait(brut):
     return texte[:300] if texte else "(corps vide)"
 
 
+def _quota_long(corps):
+    """Un 429 qui ne passera pas dans les deux minutes du budget de reessai.
+
+    Open-Meteo plafonne le gratuit PAR ADRESSE IP, a la minute, a l'heure et a la
+    journee. Les runners GitHub partagent leurs adresses avec d'autres depots : les
+    19, 20 et 21 novembre 2026, le dernier passage du jour est tombe sur « Daily API
+    request limit exceeded », quota epuise par d'autres que nous. Seul le plafond a
+    la minute se leve en quelques secondes ; insister sur les deux autres brulait
+    110 s pour rien, avant d'echouer quand meme.
+    """
+    texte = corps.lower()
+    return "daily" in texte or "hourly" in texte
+
+
 def _tentative(req, cible):
     try:
         with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
@@ -72,7 +86,7 @@ def _tentative(req, cible):
         except Exception:
             corps = "(corps illisible)"
         raise ErreurMeteo(cible, e.code, corps,
-                          reseau.transitoire_http(e.code)) from None
+                          reseau.transitoire_http(e.code) and not _quota_long(corps)) from None
     try:
         data = json.loads(brut.decode("utf-8"))
     except ValueError:

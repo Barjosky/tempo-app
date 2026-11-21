@@ -818,6 +818,28 @@ l'environnement de développement ne laisse pas joindre. Le comportement est val
 rendu dans les deux cas — API qui répond, API injoignable — mais seul le site publié
 dira si le navigateur accepte l'appel.
 
+## Quota Open-Meteo épuisé par d'autres (19 au 21 novembre 2026)
+
+Trois échecs en trois jours, tous sur le **dernier passage du jour** (19 nov. 23h23,
+20 nov. 22h57, 21 nov. 17h40 UTC), tous sur le même refus d'Open-Meteo : HTTP 429,
+« Daily API request limit exceeded ». Le passage précédent du même jour avait réussi
+chaque fois.
+
+Nous faisons au plus 24 appels par passage (8 villes × 3 requêtes), soit environ 70
+par jour pour un plafond de 10 000. Ce n'est pas notre consommation qui épuise le
+quota : Open-Meteo plafonne **par adresse IP**, et les runners GitHub partagent les
+leurs avec d'autres dépôts. Rien à optimiser de notre côté.
+
+Deux corrections :
+- **Un quota journalier ou horaire n'est plus réessayé.** Chaque échec brûlait d'abord
+  les 110 s du budget de réessai, sur un refus qui ne pouvait pas se lever en deux
+  minutes. Le plafond à la minute reste réessayé.
+- **Repli sur la prévision collectée le même jour.** Ses échéances sont comptées
+  depuis la même date : la reprendre ne décale rien, et recalculer reste utile parce
+  que la couleur du lendemain a pu être annoncée entre-temps. Celle de la veille n'est
+  **jamais** reprise, parce que ses échéances sont décalées d'un jour. Le repli laisse
+  une annotation au lieu de rougir le passage, puisque la donnée est fraîche.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
