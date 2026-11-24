@@ -1098,6 +1098,76 @@ def test_une_prevision_refusee_reprend_celle_du_jour_mais_jamais_celle_de_la_vei
         "prevision meteo", "weather", lambda c, d: 16, conn, run_date) == 16
 
 
+def test_un_jour_pp_signale_par_rte_s_affiche_rouge():
+    """Depuis le 1er novembre 2026, un jour PP est un jour Tempo Rouge (CRE 2026-189).
+
+    Le 26 novembre 2026, premier PP de la saison, le modele y voyait du Blanc a 80 %.
+    Le signal passe donc AVANT le modele, et APRES la couleur officielle. Les 24 et 31
+    decembre ne peuvent plus etre Rouges, PP ou non ; avant la reforme, PP et Rouge
+    etaient deux signaux distincts.
+    """
+    from src import predict
+    pp = {"2026-11-26", "2026-12-24", "2025-12-10"}
+    assert predict.couleur_publiee(None, 2, date(2026, 11, 26), pp) == 3
+    assert predict.couleur_publiee(2, 2, date(2026, 11, 26), pp) == 2, "l'officiel prime"
+    assert predict.couleur_publiee(None, 2, date(2026, 11, 27), pp) == 2
+    assert predict.couleur_publiee(None, 2, date(2026, 12, 24), pp) == 2
+    assert predict.couleur_publiee(None, 1, date(2025, 12, 10), pp) == 1
+
+
+def test_les_signaux_pp_se_lisent_et_le_format_de_date_se_rattrape():
+    """La forme de la reponse, et le repli sur « Z » si le decalage est refuse.
+
+    L'API des indisponibilites refuse le decalage explicite ; celle des signaux n'a
+    pas ete mesuree. Un 400 sur la premiere forme ne doit pas tuer la collecte.
+    """
+    payload = {"signals": [
+        {"type": "PP", "values": [
+            {"start_date": "2026-11-26T00:00:00+01:00", "value": True,
+             "updated_date": "2026-11-24T11:50:00+01:00"},
+            {"start_date": "2026-11-27T00:00:00+01:00", "value": False},
+            {"start_date": "2026-11-28T00:00:00+01:00", "value": "?"}]},
+        {"type": "AUTRE", "values": [{"start_date": "2026-11-29T00:00:00+01:00", "value": True}]},
+    ]}
+    assert rte.lire_signaux_pp(payload) == [
+        ("2026-11-26", True, "2026-11-24T11:50:00+01:00"), ("2026-11-27", False, None)]
+
+    vrai_get, vrai_dispo = rte._get, rte.disponible
+    vus = []
+
+    def faux_get(chemin, params, base=rte.BASE):
+        vus.append(params["start_date"])
+        assert base == rte.SIGNAL and chemin == "/signals"
+        if "+" in params["start_date"]:
+            raise rte.ErreurRTE(400, "format refuse")
+        return payload, None
+    rte._get, rte.disponible = faux_get, lambda: True
+    try:
+        assert len(rte.signaux_pp(date(2026, 11, 24), date(2026, 11, 28))) == 2
+        assert vus == ["2026-11-24T00:00:00+01:00", "2026-11-24T00:00:00Z"], vus
+    finally:
+        rte._get, rte.disponible = vrai_get, vrai_dispo
+
+
+def test_sans_abonnement_a_l_api_signal_la_collecte_continue():
+    """Un 403 est un reglage a faire une fois, pas une panne a rougir a chaque passage."""
+    import collector
+    vrai, vrai_dispo = rte.signaux_pp, rte.disponible
+
+    def refuse(*a):
+        raise rte.ErreurRTE(403, "not subscribed")
+    rte.signaux_pp, rte.disponible = refuse, lambda: True
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    try:
+        assert collector.refresh_pp(conn, date(2026, 11, 24)) is None
+    finally:
+        rte.signaux_pp, rte.disponible = vrai, vrai_dispo
+    db.upsert_pp(conn, [{"date": "2026-11-26", "pp": 1, "updated_date": None, "fetched_at": ""},
+                        {"date": "2026-11-27", "pp": 0, "updated_date": None, "fetched_at": ""}])
+    assert db.jours_pp(conn) == {"2026-11-26"}
+
+
 def test_l_etat_des_sources_distingue_retard_absence_et_avance():
     """Le temoin doit dire trois choses differentes, sans jamais crier a tort.
 

@@ -840,6 +840,28 @@ Deux corrections :
   **jamais** reprise, parce que ses échéances sont décalées d'un jour. Le repli laisse
   une annotation au lieu de rougir le passage, puisque la donnée est fraîche.
 
+## Jour PP = jour Rouge : le signal de RTE prime sur le modèle (24 novembre 2026)
+
+La délibération CRE 2026-189 fait tirer les Rouges par l'algorithme des **jours PP**
+du mécanisme de capacité. PP1 et PP2 sont fondus en un seul signal. Les 24 et 31
+décembre sont exclus, ainsi qu'un jour PP décidé sous alerte Ecowatt après 10h30 la
+veille. Ce point m'avait échappé en encodant les règles le 5 novembre.
+
+Premier cas : RTE signale le **jeudi 26 novembre** PP. Le modèle y voyait **Blanc à
+80 %, Rouge à 11 %**. Il a appris l'ancien régime et ne pouvait pas le deviner.
+
+RTE désigne une partie des jours PP dès l'avant-veille, avant midi, sans revenir
+dessus. Ces Rouges-là deviennent donc **connus à J-2**, au lieu d'être devinés. Ordre
+de priorité : couleur officielle, puis signal PP, puis modèle
+(`predict.couleur_publiee`).
+
+Source : API RTE « Signal » v2 (`/open_api/signal/v2/signals`). Elle demande un
+abonnement **distinct** de celui des indisponibilités. Faute d'abonnement, RTE répond
+403 et le passage le signale en annotation. Le format des dates n'a pas été mesuré
+sur cette API : on tente le décalage explicite, puis « Z ».
+
+À mesurer : la part des Rouges de l'hiver annoncés à J-2 par un PP.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite

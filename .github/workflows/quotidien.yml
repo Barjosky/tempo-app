@@ -128,7 +128,13 @@ jobs:
             python ingest_rte.py
           fi
 
+      # Les secrets RTE servent ici aux signaux PP : depuis novembre 2026, un jour PP
+      # est un jour Rouge, connu des l'avant-veille.
       - name: Collecte du jour et prediction
+        env:
+          RTE_BASIC_AUTH: ${{ secrets.RTE_BASIC_AUTH }}
+          RTE_CLIENT_ID: ${{ secrets.RTE_CLIENT_ID }}
+          RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
         run: python collector.py
 
       # Un changement de features rend le modele en cache obsolete : ses colonnes ne

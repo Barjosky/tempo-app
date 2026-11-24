@@ -39,6 +39,18 @@ CUMUL_FIN_DECEMBRE = 6
 CUMUL_FIN_FEVRIER = config.QUOTA_ROUGE - PLAFOND_MOIS[3]
 
 
+def pp_vaut_rouge(d):
+    """Un jour PP signale par RTE est-il, a coup sur, un jour Tempo Rouge ?
+
+    Oui depuis le 1er novembre 2026 : la deliberation 2026-189 fait tirer les Rouges
+    par l'algorithme des jours PP. Sauf les 24 et 31 decembre, qui ne peuvent plus etre
+    Rouges. Reste une exception qu'on ne sait pas voir d'ici : une alerte Ecowatt
+    orange ou rouge decidee apres 10h30 la veille fait un jour PP SANS Rouge. Rare, et
+    la couleur officielle de la veille corrige alors la page d'elle-meme.
+    """
+    return regles_2026(d) and (d.month, d.day) not in JOURS_SANS_ROUGE
+
+
 def regles_2026(d):
     """Vrai si `d` releve du tirage encadre par la deliberation 2026-189."""
     return d >= REGLES_CRE_2026

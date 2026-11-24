@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config
-from src import db, features, model
+from src import db, features, model, rules
 from src.sources import calendrier
 
 MODEL_PATH = config.DATA_DIR / "model.joblib"
@@ -114,6 +114,20 @@ def besoin_d_entrainement():
         return True
 
 
+def couleur_publiee(officielle, du_modele, cible, pp):
+    """La couleur officielle d'abord ; puis le signal PP de RTE ; le modele en dernier.
+
+    Le signal PP passe AVANT le modele : c'est le tirage de RTE lui-meme, pas une
+    estimation. Le 26 novembre 2026, premier jour PP de la saison, le modele -- qui a
+    appris l'ancien regime -- y voyait du Blanc a 80 % et du Rouge a 11 %.
+    """
+    if officielle:
+        return officielle
+    if cible.isoformat() in pp and rules.pp_vaut_rouge(cible):
+        return 3
+    return du_modele
+
+
 def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
     """Predictions figees pour J+1..J+N, en n'utilisant que ce qui est connu aujourd'hui."""
     run_date = run_date or date.today()
@@ -137,6 +151,7 @@ def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
     if not X:
         return []
 
+    pp = db.jours_pp(conn)
     probs = gbm.predict_proba(np.array(X), meta)
     colors = model.decide(probs, gbm.rouge_threshold, gbm.blanc_threshold)
     now = datetime.now().isoformat(timespec="seconds")
@@ -148,7 +163,7 @@ def predict_next_days(conn, run_date=None, days=config.MAX_HORIZON, store=None):
             "target_date": m["target"].isoformat(), "horizon": m["horizon"],
             "p_bleu": float(probs[i][0]), "p_blanc": float(probs[i][1]),
             "p_rouge": float(probs[i][2]),
-            "predicted_color": int(official or colors[i]),
+            "predicted_color": int(couleur_publiee(official, colors[i], m["target"], pp)),
             "is_official": int(bool(official)),
             "model_version": version,
         })

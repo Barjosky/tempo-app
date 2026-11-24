@@ -171,8 +171,14 @@ function tariffBlock(color) {
    applique pas), rien sur un jour Bleu (le lecteur ne decide rien, et repeter un taux
    sur onze cartes le rendrait invisible la ou il compte), rien sous 30 cas mesures --
    le serveur ne publie deja pas ces echeances-la. */
+/* Signal PP de RTE : depuis le 1er novembre 2026, un jour PP est un jour Rouge.
+   Ce n'est plus une prevision mais le tirage de RTE, connu des l'avant-veille --
+   il se traite comme une couleur annoncee, sans probabilites ni fiabilite. Des que
+   la couleur officielle tombe, c'est elle qui parle. */
+const signalPP = (d) => Boolean(d.signal_pp && !d.official);
+
 function fiabiliteBlock(d) {
-  if (!fiabilite || d.official || d.color === 1) return "";
+  if (!fiabilite || d.official || signalPP(d) || d.color === 1) return "";
   // A l'echeance ou la prevision a ete CALCULEE : elle peut differer de celle
   // affichee quand le dernier calcul date de la veille.
   const echeance = d.echeance ?? d.horizon;
@@ -240,7 +246,7 @@ function renderAlert(days) {
   const nomme = (d) => {
     const f = fmtDate(d.date);
     const quand = d.horizon === 0 ? "aujourd'hui" : `${f.dow} ${f.num} ${f.month}`;
-    const sur = (i) => d.official ? "(officiel)" : `(${pct(d.p[i])})`;
+    const sur = (i) => d.official ? "(officiel)" : signalPP(d) ? "(signal PP RTE)" : `(${pct(d.p[i])})`;
     return `<b>${quand}</b> ${sur(d.color - 1)}`;
   };
 
@@ -340,7 +346,7 @@ function renderRuban(days) {
   box.innerHTML = days.map((d, i) => {
     const f = fmtDate(d.date);
     const titre = `${f.dow} ${f.num} ${f.month} — ${d.color_name}`
-      + (d.official ? " (officiel RTE)" : "")
+      + (d.official ? " (officiel RTE)" : signalPP(d) ? " (signal PP RTE)" : "")
       + (d.change ? `, ${d.change.from_name} hier` : "");
     return `<button type="button" class="rj" data-color="${d.color}" data-i="${i}"
               style="--col:${COLORS[d.color]}" title="${titre}" aria-label="${titre}">
@@ -516,9 +522,9 @@ function rendreJours(days, anime = true) {
     // rendait le repli trop muet : on ne savait plus si « Bleu » voulait dire 95 % ou
     // 80 %. La barre, elle, reste reservee aux jours ou il y a une hesitation a voir --
     // c'est ce qui les fait ressortir.
-    const chiffres = (!d.p || d.official || !calme) ? "" : `
+    const chiffres = (!d.p || d.official || signalPP(d) || !calme) ? "" : `
         <p class="pmini"><span>Bleu ${pct(d.p[0])}</span><span>Blanc ${pct(d.p[1])}</span><span>Rouge ${pct(d.p[2])}</span></p>`;
-    const proba = (!d.p || calme || d.official) ? "" : `
+    const proba = (!d.p || calme || d.official || signalPP(d)) ? "" : `
         <div class="proba">
           <div class="pbar">
             <i class="b" style="width:${d.p[0] * 100}%"></i>
@@ -540,7 +546,8 @@ function rendreJours(days, anime = true) {
         </div>
         <div class="verdict">
           <span class="chip"></span><b>${d.color_name}</b>
-          ${d.official ? '<span class="tag">officiel RTE</span>' : ""}
+          ${d.official ? '<span class="tag">officiel RTE</span>'
+            : signalPP(d) ? '<span class="tag" title="Depuis novembre 2026, un jour PP signalé par RTE est un jour Tempo Rouge">signal PP RTE</span>' : ""}
         </div>
         ${temp ? `<div class="temp">${temp}</div>` : ""}
         ${changeBlock(d)}
