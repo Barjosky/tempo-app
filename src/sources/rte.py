@@ -33,6 +33,10 @@ TOKEN_URL = "https://digital.iservices.rte-france.com/token/oauth/"
 BASE = ("https://digital.iservices.rte-france.com"
         "/open_api/unavailability_additional_information/v7")
 
+# API « Signal » : les jours PP. Abonnement distinct de celui des indisponibilites,
+# a activer sur data.rte-france.com pour la meme application.
+SIGNAL = "https://digital.iservices.rte-france.com/open_api/signal/v2"
+
 _jeton = {"valeur": None, "expire": 0.0}
 
 
@@ -93,13 +97,13 @@ def jeton():
     return _jeton["valeur"]
 
 
-def _get(chemin, params):
+def _get(chemin, params, base=BASE):
     """Une page de resultats. Rend (donnees, jeton_de_continuation)."""
     # `_suite` est interne : RTE attend le jeton de continuation dans un EN-TETE, et
     # refuse tout parametre de requete qu'il ne connait pas.
     qs = urllib.parse.urlencode({k: v for k, v in params.items()
                                  if v is not None and not k.startswith("_")})
-    cible = f"{BASE}{chemin}?{qs}"
+    cible = f"{base}{chemin}?{qs}"
 
     def tentative():
         entetes = {"Authorization": f"Bearer {jeton()}",
@@ -170,6 +174,49 @@ def arrets(debut, fin, fuel=None, date_type="EVENT_DATE", derniere_version=True)
         out += (payload or {}).get("generation_unavailabilities", [])
         if not suite:
             return out
+
+
+def _minuit_paris(d):
+    """Minuit heure de Paris, avec son decalage : la forme des guides de l'API Signal."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime(d.year, d.month, d.day, tzinfo=ZoneInfo("Europe/Paris")).isoformat()
+
+
+def signaux_pp(debut, fin):
+    """Jours PP publies par RTE sur [debut, fin[ -> [(date ISO, pp, updated_date)].
+
+    Le format des dates n'a pas ete mesure sur cette API-ci : l'API des
+    indisponibilites refuse le decalage explicite et exige « Z ». On essaie donc la
+    forme des guides de l'API Signal (minuit Paris, decalage explicite), puis « Z » si
+    elle est refusee -- un 400 dit « mal forme », pas « rien a dire ».
+    """
+    if not disponible():
+        return []
+    formes = [(_minuit_paris(debut), _minuit_paris(fin)),
+              (_horodatage(debut), _horodatage(fin))]
+    for i, (a, b) in enumerate(formes):
+        try:
+            payload, _ = _get("/signals", {"start_date": a, "end_date": b}, base=SIGNAL)
+            return lire_signaux_pp(payload)
+        except ErreurRTE as e:
+            if e.code == 404:
+                return []
+            if e.code != 400 or i == len(formes) - 1:
+                raise
+
+
+def lire_signaux_pp(payload):
+    """Aplati la reponse de l'API Signal. Seuls les signaux de type PP comptent."""
+    out = []
+    for signal in (payload or {}).get("signals", []) or []:
+        if signal.get("type") not in (None, "PP"):
+            continue
+        for v in signal.get("values", []) or []:
+            jour = _jour(v.get("start_date"))
+            if jour and isinstance(v.get("value"), bool):
+                out.append((jour, v["value"], v.get("updated_date")))
+    return out
 
 
 def _jour(texte):

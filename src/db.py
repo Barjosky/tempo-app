@@ -153,6 +153,18 @@ CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_date, target_date);
 
 CREATE INDEX IF NOT EXISTS idx_pred_target ON predictions(target_date);
 CREATE INDEX IF NOT EXISTS idx_days_season ON days(season);
+
+-- Signaux « jour PP » publies par RTE (API Signal). Depuis le 1er novembre 2026
+-- (deliberation CRE 2026-189), un jour PP est un jour Tempo Rouge : RTE en designe
+-- une partie des l'avant-veille, ce qui fait connaitre ces Rouges DEUX jours a
+-- l'avance, au lieu de les deviner. `pp` vaut 0 pour un jour que RTE a explicitement
+-- declare non PP.
+CREATE TABLE IF NOT EXISTS pp_signals (
+    date TEXT PRIMARY KEY,
+    pp INTEGER NOT NULL,
+    updated_date TEXT,
+    fetched_at TEXT
+);
 """
 
 
@@ -260,6 +272,21 @@ def upsert_unavailabilities(conn, rows):
         rows,
     )
     conn.commit()
+
+
+def upsert_pp(conn, rows):
+    conn.executemany(
+        """INSERT INTO pp_signals (date, pp, updated_date, fetched_at)
+           VALUES (:date, :pp, :updated_date, :fetched_at)
+           ON CONFLICT(date) DO UPDATE SET pp = excluded.pp,
+             updated_date = excluded.updated_date, fetched_at = excluded.fetched_at""",
+        rows)
+    conn.commit()
+
+
+def jours_pp(conn):
+    """Dates (ISO) que RTE a signalees jour PP."""
+    return {r[0] for r in conn.execute("SELECT date FROM pp_signals WHERE pp = 1")}
 
 
 def enregistrer_passage(conn, run_datetime, run_date, declencheur):

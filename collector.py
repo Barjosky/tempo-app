@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import config
 from src import db, features, predict
-from src.sources import calendrier, eco2mix, meteo, tempo_api
+from src.sources import calendrier, eco2mix, meteo, rte, tempo_api
 
 
 # Ce fichier n'existe que le temps d'un passage : il dit a l'atelier, APRES la
@@ -163,6 +163,29 @@ def refresh_renewables(conn, run_date):
     return len(rows)
 
 
+def refresh_pp(conn, run_date):
+    """Jours PP publies par RTE, de la veille a J+3 (RTE les annonce a J-2 au plus tot).
+
+    Sans identifiants RTE, rien. Avec des identifiants mais sans abonnement a l'API
+    Signal, RTE repond 403 : ce n'est pas une panne a rougir trois fois par jour,
+    c'est un reglage a faire une fois -- d'ou une annotation qui dit lequel.
+    """
+    if not rte.disponible():
+        return None
+    try:
+        signaux = rte.signaux_pp(run_date - timedelta(days=1), run_date + timedelta(days=4))
+    except rte.ErreurRTE as e:
+        if e.code != 403:
+            raise
+        print("::warning::Signaux PP indisponibles : l'application RTE n'est pas abonnee "
+              f"a l'API « Signal » (data.rte-france.com) — {e.corps}")
+        return None
+    now = datetime.now().isoformat(timespec="seconds")
+    db.upsert_pp(conn, [{"date": j, "pp": int(pp), "updated_date": maj, "fetched_at": now}
+                        for j, pp, maj in signaux])
+    return [j for j, pp, _ in signaux if pp]
+
+
 def refresh_conso(conn, run_date):
     """Consommation et production reelles des jours recents (eCO2mix temps reel)."""
     series = eco2mix.fetch_recent(run_date - timedelta(days=20), run_date + timedelta(days=1))
@@ -195,6 +218,9 @@ def main():
     n_ren = optionnelle("eolien/solaire", ou_celle_du_jour, "eolien/solaire", "renewables",
                         refresh_renewables, conn, run_date)
     print(f"Eolien/solaire : {chiffre(n_ren)} echeances")
+
+    pp = optionnelle("signaux PP (RTE)", refresh_pp, conn, run_date)
+    print(f"Signaux PP (RTE) : {'non collectes' if pp is None else (', '.join(pp) or 'aucun jour PP')}")
 
     n_conso = optionnelle("consommation (eCO2mix)", refresh_conso, conn, run_date)
     print(f"Consommation reelle (eCO2mix) : {chiffre(n_conso)} jours")

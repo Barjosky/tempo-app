@@ -244,6 +244,7 @@ def forecast():
         f"SELECT MAX(run_date) FROM predictions_a_jour WHERE {LIVE_VERSIONS}").fetchone()[0]
     items = []
     avant, veille = changements(conn, last_run) if last_run else ({}, None)
+    pp = db.jours_pp(conn)
     if last_run:
         # J+0 : la couleur du jour, connue et non predite. Sans elle la page
         # commence a demain, alors que c'est aujourd'hui qu'on consomme.
@@ -273,6 +274,9 @@ def forecast():
                 "official": official,
                 "confidence": max(r["p_bleu"], r["p_blanc"], r["p_rouge"]),
             }
+            if (not official and r["target_date"] in pp
+                    and rules.pp_vaut_rouge(date.fromisoformat(r["target_date"]))):
+                it["signal_pp"] = True
             # Un jour devenu officiel n'a pas « change d'avis » : RTE a tranche. Le
             # signaler comme un revirement du modele serait un contresens.
             precedent = avant.get(r["target_date"])
