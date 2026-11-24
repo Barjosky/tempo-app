@@ -1022,6 +1022,82 @@ def test_une_source_optionnelle_qui_tombe_n_emporte_pas_le_passage():
         collector._degradees.clear()
 
 
+def test_un_quota_journalier_n_est_pas_reessaye():
+    """« Daily API request limit exceeded » ne se leve pas en deux minutes.
+
+    Les 19, 20 et 21 novembre 2026, chaque echec a d'abord brule les 110 s du budget
+    de reessai sur un refus qui ne pouvait pas passer. Le plafond a la minute, lui,
+    se leve vite : il reste transitoire.
+    """
+    import io
+    import urllib.error
+    from src import reseau
+    from src.sources import meteo
+    vrai_urlopen, vrai_sleep = meteo.urllib.request.urlopen, reseau.time.sleep
+    attentes = []
+    reseau.time.sleep = attentes.append
+
+    def refuse(raison):
+        def urlopen(*a, **k):
+            corps = ('{"error":true,"reason":"%s"}' % raison).encode()
+            raise urllib.error.HTTPError(meteo.FORECAST_URL, 429, "Too Many", {},
+                                         io.BytesIO(corps))
+        return urlopen
+    try:
+        meteo.urllib.request.urlopen = refuse(
+            "Daily API request limit exceeded. Please try again tomorrow.")
+        try:
+            meteo._get(meteo.FORECAST_URL, {"latitude": 48.8})
+            raise AssertionError("un 429 doit lever")
+        except meteo.ErreurMeteo as e:
+            assert e.code == 429 and not e.transitoire, e
+        assert attentes == [], f"quota journalier reessaye : {attentes}"
+
+        meteo.urllib.request.urlopen = refuse("Minutely API request limit exceeded.")
+        try:
+            meteo._get(meteo.FORECAST_URL, {"latitude": 48.8})
+        except meteo.ErreurMeteo as e:
+            assert e.transitoire, e
+        assert attentes, "le plafond a la minute doit rester reessaye"
+    finally:
+        meteo.urllib.request.urlopen, reseau.time.sleep = vrai_urlopen, vrai_sleep
+
+
+def test_une_prevision_refusee_reprend_celle_du_jour_mais_jamais_celle_de_la_veille():
+    """Le repli ne vaut que pour une prevision collectee LE MEME JOUR.
+
+    Celle de la veille a ses echeances comptees depuis une autre date : la reprendre
+    publierait des couleurs decalees d'un jour sous la date d'aujourd'hui.
+    """
+    import collector
+    from src.sources import meteo
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    run_date = date(2026, 11, 21)
+
+    def refuse(conn, run_date):
+        raise meteo.ErreurMeteo("u", 429, "Daily API request limit exceeded")
+
+    def pose(jour):
+        db.upsert_weather(conn, [{
+            "date": (run_date + timedelta(days=h)).isoformat(), "lead": h,
+            "tmean": 8.0, "tmin": 4.0, "tmax": 12.0, "wind": 10.0, "hdd": 9.0,
+            "source": "forecast", "fetched_at": f"{jour}T15:00:00"} for h in (1, 2, 3)])
+
+    pose("2026-11-20")
+    try:
+        collector.ou_celle_du_jour("prevision meteo", "weather", refuse, conn, run_date)
+        raise AssertionError("la prevision de la veille ne doit pas etre reprise")
+    except meteo.ErreurMeteo:
+        pass
+
+    pose("2026-11-21")
+    assert collector.ou_celle_du_jour(
+        "prevision meteo", "weather", refuse, conn, run_date) == 3
+    assert collector.ou_celle_du_jour(
+        "prevision meteo", "weather", lambda c, d: 16, conn, run_date) == 16
+
+
 def test_l_etat_des_sources_distingue_retard_absence_et_avance():
     """Le temoin doit dire trois choses differentes, sans jamais crier a tort.
 
