@@ -1,1 +1,1 @@
-{"by_horizon":[{"accuracy":0.8823529411764706,"horizon":7,"n":17,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":null,"rouge_total":0}],"confusion":[[13,0,0],[2,2,0],[0,0,0]],"n":17,"period":"eligibles","reliability":[]}
+{"by_horizon":[{"accuracy":0.8333333333333334,"horizon":7,"n":18,"rouge_flagged":0,"rouge_precision":null,"rouge_recall":0.0,"rouge_total":1}],"confusion":[[13,0,0],[2,2,0],[0,1,0]],"n":18,"period":"eligibles","reliability":[]}
