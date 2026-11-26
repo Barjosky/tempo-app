@@ -9,3 +9,4 @@ reports/backtest_*.html
 
 # Marqueur de sources degradees : la duree d une collecte, pas plus.
 .degradations
+.sources_en_retard
