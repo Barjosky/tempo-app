@@ -98,6 +98,18 @@ def sante_indisponibilites():
           f"{part:.0%} a la puissance installee entiere, {r['sans_mw'] or 0} sans puissance")
 
 
+# Sources en retard AU-DELA de leur tolerance -- la meme regle que le temoin de la page.
+#
+# Avant, le moindre echec d'une source facultative rougissait le passage. Le 26
+# novembre 2026, c'est l'archive ERA5 (une meteo vieille de six jours, rattrapee au
+# passage suivant) qui a renvoye une erreur serveur : la page etait a jour, et le
+# passage rouge quand meme. Une alarme qui sonne presque tous les jours pour des pannes
+# deja resorbees finit ignoree le jour ou elle compte. On ne rougit donc plus sur un
+# echec, mais sur un RETARD : une panne isolee reste une annotation, une panne qui dure
+# franchit la tolerance et rougit.
+EN_RETARD = Path(__file__).parent / ".sources_en_retard"
+
+
 def etat_des_sources():
     """Le meme tableau que la page, dans les logs du passage.
 
@@ -109,7 +121,13 @@ def etat_des_sources():
     from app import sante_sources
     conn = db.connect()
     print("\nEtat des sources :")
-    for s in sante_sources(conn):
+    etats = sante_sources(conn)
+    # Ce fichier, et lui seul, fait rougir le passage : voir l'etape finale du workflow.
+    EN_RETARD.write_text("".join(
+        f"{s['nom']} : couvre jusqu'au {s['couvre']}, {s['retard']} j de retard "
+        f"(tolerance {s['tolerance']})\n" for s in etats if s["etat"] == "en retard"),
+        encoding="utf-8")
+    for s in etats:
         if s["etat"] == "absente":
             print(f"  absente | {s['nom']} — aucune donnee (source non configuree ?)")
             continue

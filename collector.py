@@ -34,8 +34,10 @@ def optionnelle(nom, fonction, *args):
 
     Le repli n'est pas le silence pour autant. Une source peut tomber une fois -- ca
     se rattrape au passage suivant -- ou rester morte des semaines, et de l'exterieur
-    les deux se ressemblent. La panne est donc consignee, et l'atelier rougit le
-    passage APRES avoir publie : la page est fraiche ET l'alarme est visible.
+    les deux se ressemblent. La panne est donc consignee en annotation ; ce qui fait
+    rougir le passage, c'est le RETARD qu'elle finit par creuser (voir `EN_RETARD`
+    dans export_static.py) -- la page est fraiche, et l'alarme reservee aux pannes
+    qui durent.
     """
     try:
         return fonction(*args)

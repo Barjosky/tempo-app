@@ -862,6 +862,20 @@ sur cette API : on tente le décalage explicite, puis « Z ».
 
 À mesurer : la part des Rouges de l'hiver annoncés à J-2 par un PP.
 
+## Rougir sur un retard, plus sur un échec (26 novembre 2026)
+
+Le passage du 26 novembre à 1h50 a publié la page, puis s'est mis en rouge : l'archive
+ERA5 avait renvoyé « Unexpected error while streaming data ». ERA5 est la météo
+observée d'il y a six jours, rattrapée au passage suivant. L'utilisateur recevait
+presque chaque jour un mail d'échec pour des pannes déjà résorbées. Une alarme
+pareille finit ignorée le jour où elle compte.
+
+Nouvelle règle : un échec isolé d'une source facultative devient une **annotation**.
+Le passage ne rougit que si une source est **en retard au-delà de sa tolérance**,
+c'est-à-dire la même règle que le témoin de la page (`app.SOURCES`). Pour ERA5, cela
+représente plus de 4 jours sans rattrapage. La prévision météo du jour reste
+bloquante : sans elle, rien n'est publié.
+
 ## Pistes non explorées
 - **Une feature n'a pas la même valeur à chaque échéance** (voir ci-dessus) : la charge
   résiduelle est porteuse à J+1 et instable à J+10, et un modèle unique les traite
