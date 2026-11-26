@@ -790,7 +790,7 @@ def test_les_horaires_demandes_restent_documentes():
     phase : le jour ou un cron est ajoute sans la config, c'est ce couple qui le dit."""
     assert "06:30" in config.SCHEDULES_UTC, (
         "le passage tot, ajoute pour viser midi, a disparu de la configuration")
-    assert len(config.SCHEDULES_UTC) == 3
+    assert len(config.SCHEDULES_UTC) == 5
 
 
 def test_j1_se_retire_du_perimetre_de_notation():

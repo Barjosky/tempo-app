@@ -16,10 +16,17 @@ on:
     # 10h30 UTC = apres l'annonce RTE de 11h (Paris) toute l'annee : 11h30 l'hiver,
     # 12h30 l'ete. Le filet, celui qui ne depend d'aucun pari.
     - cron: "30 10 * * *"
+    # Ajoute le 26 novembre 2026, a la demande : RTE annonce les jours PP (= Rouge)
+    # a midi l'avant-veille. Ce passage les capte le jour meme, sans attendre le soir.
+    # Minutes hors de l'heure pile : les crons a :00 sont les plus retardes.
+    - cron: "15 13 * * *"
     # Deuxieme passage en fin de journee, pour rattraper une prevision meteo qui a
     # bouge depuis le matin. 19h l'ete, 18h l'hiver -- un cron ne connait que l'UTC et
     # ne suit pas le changement d'heure.
     - cron: "0 17 * * *"
+    # Ajoute le 26 novembre 2026 : derniere prevision meteo du soir, et filet si un
+    # passage precedent est tombe.
+    - cron: "45 20 * * *"
   workflow_dispatch:
     inputs:
       reentrainer:
